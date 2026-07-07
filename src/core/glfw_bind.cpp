@@ -12,4 +12,5 @@ PFN_glfwSetWindowTitle p_glfwSetWindowTitle = nullptr;
 PFN_glfwSetFramebufferSizeCallback p_glfwSetFramebufferSizeCallback = nullptr;
 PFN_glfwGetFramebufferSize p_glfwGetFramebufferSize = nullptr;
 PFN_glfwWaitEvents p_glfwWaitEvents = nullptr;
+PFN_glfwGetWin32Window p_glfwGetWin32Window = nullptr;
 #endif

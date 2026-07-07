@@ -92,6 +92,9 @@ static void bind_symbols(DYNLIB_HANDLE h) {
         reinterpret_cast<PFN_glfwSetFramebufferSizeCallback>(gp("glfwSetFramebufferSizeCallback"));
     p_glfwGetFramebufferSize = reinterpret_cast<PFN_glfwGetFramebufferSize>(gp("glfwGetFramebufferSize"));
     p_glfwWaitEvents = reinterpret_cast<PFN_glfwWaitEvents>(gp("glfwWaitEvents"));
+#if defined(_WIN32)
+    p_glfwGetWin32Window = reinterpret_cast<PFN_glfwGetWin32Window>(gp("glfwGetWin32Window"));
+#endif
 }
 
 static std::u16string JStringToU16(JNIEnv* env, jstring jstr) {
