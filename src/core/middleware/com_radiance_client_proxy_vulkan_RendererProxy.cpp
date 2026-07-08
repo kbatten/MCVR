@@ -158,6 +158,7 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_acqui
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_submitCommand(JNIEnv *, jclass) {
+    std::cerr << "[Render] submitCommand" << std::endl;
     auto framework = Renderer::instance().framework();
     if (framework == nullptr) return;
     framework->submitCommand();
@@ -170,6 +171,7 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_prese
 }
 
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_fuseWorld(JNIEnv *, jclass) {
+    std::cerr << "[Render] fuseWorld" << std::endl;
     auto framework = Renderer::instance().framework();
     if (framework == nullptr) return;
     auto context = framework->safeAcquireCurrentContext();

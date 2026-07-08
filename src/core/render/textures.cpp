@@ -72,6 +72,7 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
         // pile up until memory / maxMemoryAllocationCount is exhausted. Bound the pile-up.
         if (++reinitSinceDrain_ >= 256) {
             reinitSinceDrain_ = 0;
+            texturesCerr() << "[Drain] releaseAll (256 re-inits)" << std::endl;
             framework->waitDeviceIdle();
             framework->frameResourceRetainer().releaseAll();
         }
@@ -265,6 +266,9 @@ void Textures::flushQueuedUploadImpl() {
         queuedUploadBytes_ = 0;
         return;
     }
+
+    texturesCerr() << "[Flush] " << uploadQueue_->size() << " textures, " << queuedUploadBytes_ << " bytes"
+                   << std::endl;
 
     auto framework = Renderer::instance().framework();
     auto device = framework->device();
