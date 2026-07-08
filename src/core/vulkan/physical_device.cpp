@@ -3,6 +3,7 @@
 #include "core/vulkan/instance.hpp"
 #include "core/vulkan/window.hpp"
 
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -11,7 +12,10 @@ std::ostream &physicalDeviceCout() {
 }
 
 std::ostream &physicalDeviceCerr() {
-    return std::cerr << "[PhysicalDevice] ";
+    // Route to the flushed diagnostics file (see window.cpp): the vanilla launcher's javaw.exe has
+    // no console, so stderr is discarded. Append -- window.cpp truncated the file earlier.
+    static std::ofstream f("radiance_surface.log", std::ios::app);
+    return f << "[PhysicalDevice] ";
 }
 
 bool isDeviceSuitable(VkPhysicalDevice device) {
@@ -180,6 +184,9 @@ void vk::PhysicalDevice::findQueueFamilies() {
         if (queueFamilies[i].queueCount > 0 && (queueFamilies[i].queueFlags & VK_QUEUE_TRANSFER_BIT)) {
             transferSupport = true;
         }
+
+        physicalDeviceCerr() << "queue " << i << ": present=" << presentSupport << " graphics=" << graphicsSupport
+                             << " compute=" << computeSupport << " transfer=" << transferSupport << std::endl;
 
         // Early exit if all needed queue families are found
         if (presentSupport && graphicsSupport && computeSupport && transferSupport) {

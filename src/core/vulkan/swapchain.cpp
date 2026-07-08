@@ -8,6 +8,7 @@
 #include "core/render/renderer.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <vector>
 
@@ -16,7 +17,9 @@ std::ostream &swapchainCout() {
 }
 
 std::ostream &swapchainCerr() {
-    return std::cerr << "[Swapchain] ";
+    // Route to the flushed diagnostics file (see window.cpp): javaw.exe has no console. Append.
+    static std::ofstream f("radiance_surface.log", std::ios::app);
+    return f << "[Swapchain] ";
 }
 
 vk::Swapchain::Swapchain(std::shared_ptr<PhysicalDevice> physicalDevice,
@@ -187,13 +190,15 @@ void vk::Swapchain::reconstruct() {
     createInfo.clipped = VK_TRUE;
     createInfo.oldSwapchain = oldSwapchain;
 
-    if (vkCreateSwapchainKHR(device_->vkDevice(), &createInfo, nullptr, &swapchain_) != VK_SUCCESS) {
-        swapchainCerr() << "failed to create swap chain" << std::endl;
+    swapchainCerr() << "calling vkCreateSwapchainKHR (presentMode=" << createInfo.presentMode
+                    << " minImageCount=" << createInfo.minImageCount << " extent=" << createInfo.imageExtent.width
+                    << "x" << createInfo.imageExtent.height << ")..." << std::endl;
+    VkResult swapchainResult = vkCreateSwapchainKHR(device_->vkDevice(), &createInfo, nullptr, &swapchain_);
+    if (swapchainResult != VK_SUCCESS) {
+        swapchainCerr() << "failed to create swap chain, VkResult=" << swapchainResult << std::endl;
         exit(EXIT_FAILURE);
     } else {
-#ifdef DEBUG
-        swapchainCout() << "created swap chain" << std::endl;
-#endif
+        swapchainCerr() << "vkCreateSwapchainKHR succeeded (swapchain=" << swapchain_ << ")" << std::endl;
     }
 
     if (oldSwapchain != VK_NULL_HANDLE) { vkDestroySwapchainKHR(device_->vkDevice(), oldSwapchain, nullptr); }
