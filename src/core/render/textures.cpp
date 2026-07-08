@@ -65,6 +65,16 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
         // GL ids (assigned from the bottom up by the driver) do not collide with them.
         textures_.emplace(id, nullptr);
         samplers.emplace(id, nullptr);
+    } else if (textures_[id] != nullptr) {
+        // Re-init of a recycled GL texture id (MC deletes a texture and glGenTextures hands the same
+        // id back for a new one). The old texture+sampler are retained below for GPU safety, but
+        // during resource reload no frames are presented, so the retainer is never drained and they
+        // pile up until memory / maxMemoryAllocationCount is exhausted. Bound the pile-up.
+        if (++reinitSinceDrain_ >= 256) {
+            reinitSinceDrain_ = 0;
+            framework->waitDeviceIdle();
+            framework->frameResourceRetainer().releaseAll();
+        }
     }
 
     framework->frameResourceRetainer().retain(textures_[id]);

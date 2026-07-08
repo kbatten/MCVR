@@ -55,6 +55,8 @@ class Textures : public SharedObject<Textures> {
     std::shared_ptr<Emission> emission_;
     // Mod-internal texture ids allocated top-down from the 4096-entry descriptor array (see reset()).
     uint32_t nextID = 4095;
+    // Recycled-GL-id re-inits since the last retainer drain (bounds reload-time pile-up).
+    uint32_t reinitSinceDrain_ = 0;
     std::recursive_mutex mtx_;
 
     std::map<uint32_t, std::shared_ptr<ImageBufferCache>> caches_;

@@ -658,3 +658,9 @@ void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     currentFrameIndex_ = frameIndex;
     retainedResourcesByFrame_[currentFrameIndex_].clear();
 }
+
+void FrameResourceRetainer::releaseAll() {
+    std::unique_lock<std::recursive_mutex> lck(mtx_);
+
+    for (auto &bucket : retainedResourcesByFrame_) { bucket.clear(); }
+}

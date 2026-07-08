@@ -24,6 +24,10 @@ class FrameResourceRetainer : public SharedObject<FrameResourceRetainer> {
 
     void beginFrame(uint32_t frameIndex);
 
+    // Wait for the GPU and drop all retained resources. Used during resource reload, where no frames
+    // are presented so beginFrame() never runs and retained resources would otherwise grow unbounded.
+    void releaseAll();
+
   private:
     std::vector<std::vector<std::shared_ptr<void>>> retainedResourcesByFrame_;
     uint32_t currentFrameIndex_ = 0;
