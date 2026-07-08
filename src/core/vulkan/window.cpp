@@ -60,8 +60,25 @@ vk::Window::Window(std::shared_ptr<Instance> instance, GLFWwindow *window_) : in
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
-    if (vkCreateWin32SurfaceKHR == nullptr) {
-        log("vkCreateWin32SurfaceKHR was not loaded by volk!");
+    // Resolve vkCreateWin32SurfaceKHR from the instance rather than via volk's global: the bundled
+    // volk static lib is built without VK_USE_PLATFORM_WIN32_KHR (VOLK_STATIC_DEFINES is empty and
+    // MCVR's CMake never sets it), so its win32 entry point is never loaded and the volk global is a
+    // bad pointer -- calling it jumps into garbage. vkGetInstanceProcAddr is loaded by volkInitialize.
+    if (vkGetInstanceProcAddr == nullptr) {
+        log("vkGetInstanceProcAddr is null (volk not initialised)!");
+        GLFW_Terminate();
+        exit(EXIT_FAILURE);
+    }
+    auto pfnCreateWin32Surface = reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(
+        vkGetInstanceProcAddr(instance_->vkInstance(), "vkCreateWin32SurfaceKHR"));
+    {
+        std::ostringstream ss;
+        ss << "resolved vkCreateWin32SurfaceKHR=" << reinterpret_cast<void *>(pfnCreateWin32Surface);
+        log(ss.str());
+    }
+    if (pfnCreateWin32Surface == nullptr) {
+        log("vkGetInstanceProcAddr returned null for vkCreateWin32SurfaceKHR "
+            "(VK_KHR_win32_surface not enabled on the instance?)");
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
@@ -74,7 +91,7 @@ vk::Window::Window(std::shared_ptr<Instance> instance, GLFWwindow *window_) : in
         ss << "creating Win32 surface (hinstance=" << createInfo.hinstance << ")...";
         log(ss.str());
     }
-    result = vkCreateWin32SurfaceKHR(instance_->vkInstance(), &createInfo, nullptr, &surface_);
+    result = pfnCreateWin32Surface(instance_->vkInstance(), &createInfo, nullptr, &surface_);
     {
         std::ostringstream ss;
         ss << "vkCreateWin32SurfaceKHR result=" << result << " surface=" << surface_;
