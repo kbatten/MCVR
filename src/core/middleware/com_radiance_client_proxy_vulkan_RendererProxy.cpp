@@ -10,6 +10,7 @@
 #include "core/render/world.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <unordered_map>
 
 #if defined(_WIN32)
@@ -124,6 +125,13 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_initR
                                                                                         jclass,
                                                                                         jobjectArray candidates,
                                                                                         jlong windowHandle) {
+    // Capture all native stderr (every component's *Cerr() -> std::cerr) to a flushed file: the
+    // vanilla launcher's javaw.exe has no console, so init-failure messages are otherwise discarded.
+    // Unbuffered so the log survives a hard crash; std::cerr is synced with C stderr by default.
+#if defined(_WIN32)
+    freopen("radiance_native.log", "w", stderr);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+#endif
     DYNLIB_HANDLE h = bind_handle_from_candidates(env, candidates);
     if (!h) {
         std::cerr << "[GLFW-Bind] Could not find already-loaded GLFW via NOLOAD/GetModuleHandle."
