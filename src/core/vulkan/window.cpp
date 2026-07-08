@@ -36,11 +36,30 @@ vk::Window::Window(std::shared_ptr<Instance> instance, GLFWwindow *window_) : in
     // window handle instead -- VK_KHR_win32_surface is already enabled (glfwGetRequiredInstanceExtensions).
     VkResult result;
 #if defined(_WIN32)
+    if (p_glfwGetWin32Window == nullptr) {
+        std::cerr << "[Window] glfwGetWin32Window is not resolved!" << std::endl;
+        GLFW_Terminate();
+        exit(EXIT_FAILURE);
+    }
+    HWND hwnd = reinterpret_cast<HWND>(GLFW_GetWin32Window(window_));
+    std::cerr << "[Window] glfwWindow=" << window_ << " hwnd=" << hwnd << std::endl;
+    if (hwnd == nullptr) {
+        std::cerr << "[Window] glfwGetWin32Window returned a null HWND!" << std::endl;
+        GLFW_Terminate();
+        exit(EXIT_FAILURE);
+    }
+    if (vkCreateWin32SurfaceKHR == nullptr) {
+        std::cerr << "[Window] vkCreateWin32SurfaceKHR was not loaded by volk!" << std::endl;
+        GLFW_Terminate();
+        exit(EXIT_FAILURE);
+    }
     VkWin32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    createInfo.hinstance = GetModuleHandle(nullptr);
-    createInfo.hwnd = reinterpret_cast<HWND>(GLFW_GetWin32Window(window_));
+    createInfo.hinstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+    createInfo.hwnd = hwnd;
+    std::cerr << "[Window] creating Win32 surface (hinstance=" << createInfo.hinstance << ")..." << std::endl;
     result = vkCreateWin32SurfaceKHR(instance_->vkInstance(), &createInfo, nullptr, &surface_);
+    std::cerr << "[Window] vkCreateWin32SurfaceKHR result=" << result << " surface=" << surface_ << std::endl;
 #else
     result = GLFW_CreateWindowSurface(instance_->vkInstance(), window_, nullptr, &surface_);
 #endif
@@ -49,6 +68,7 @@ vk::Window::Window(std::shared_ptr<Instance> instance, GLFWwindow *window_) : in
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
+    std::cerr << "[Window] surface created OK; proceeding to physical-device/swapchain" << std::endl;
 }
 
 vk::Window::~Window() {
