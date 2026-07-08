@@ -54,6 +54,9 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
 
     std::scoped_lock lck(mtx_, Renderer::instance().framework()->recreateMtx());
 
+    texturesCerr() << "initTex id=" << id << " " << width << "x" << height << " maxLevel=" << maxLevel
+                   << " format=" << format << std::endl;
+
     auto textureIter = textures_.find(id);
     if (textureIter == textures_.end()) {
         // 26.2: texture ids are MC-owned GL ids (GlTexture.glId()) that were never handed out by
@@ -143,6 +146,10 @@ void Textures::queueUpload(uint8_t *srcPointer,
                            uint32_t height,
                            uint32_t level) {
     std::scoped_lock lck(mtx_, Renderer::instance().framework()->recreateMtx());
+
+    texturesCerr() << "queueUpload dstId=" << dstId << " bytes=" << srcSizeInBytes << " " << width << "x" << height
+                   << " lvl=" << level << " rowPixels=" << srcRowPixels << " dstOff=" << dstOffsetX << "," << dstOffsetY
+                   << std::endl;
 
     auto framework = Renderer::instance().framework();
 
@@ -440,6 +447,9 @@ size_t ImageBufferCache::append(void *src, size_t size) {
         size_t newCapacity = capacities_[current_] * 2;
 
         while (newCapacity < bases_[current_] + size) { newCapacity *= 2; }
+
+        texturesCerr() << "cache resize: current=" << current_ << " size=" << size << " base=" << bases_[current_]
+                       << " cap=" << capacities_[current_] << " -> newCap=" << newCapacity << std::endl;
 
         auto newCache = vk::HostVisibleBuffer::create(vma_, device_, newCapacity, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
 

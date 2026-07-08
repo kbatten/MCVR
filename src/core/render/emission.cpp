@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <limits>
 
 namespace {
@@ -375,6 +376,12 @@ void Emission::resetTexture(uint32_t textureID) {
 }
 
 void Emission::updateTile(uint32_t textureID, uint64_t tileKey, const EmissionCellUpload *cells, int cellCount) {
+    {
+        std::ofstream dbg("radiance_surface.log", std::ios::app);
+        dbg << "[Emission] updateTile tex=" << textureID << " cells=" << cellCount
+            << " statesSize=" << texturesState_.size() << "\n";
+        dbg.flush();
+    }
     if (textureID >= texturesState_.size()) {
         return;
     }
