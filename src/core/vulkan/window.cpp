@@ -2,7 +2,9 @@
 
 #include "core/vulkan/instance.hpp"
 
+#include <fstream>
 #include <iostream>
+#include <sstream>
 
 bool vk::Window::framebufferResized = false;
 
@@ -34,22 +36,32 @@ vk::Window::Window(std::shared_ptr<Instance> instance, GLFWwindow *window_) : in
     // context and is NOT GLFW_NO_API, so glfwCreateWindowSurface would reject it ("requires the
     // window to have the client API set to GLFW_NO_API"). Create the Vulkan surface from the native
     // window handle instead -- VK_KHR_win32_surface is already enabled (glfwGetRequiredInstanceExtensions).
+    //
+    // Diagnostics go to a flushed file in the game dir (radiance_surface.log): the vanilla launcher
+    // uses javaw.exe, which has no console, so stderr from core.dll is discarded. Each line is
+    // flushed so the log survives a hard crash in a later Vulkan call.
+    std::ofstream dbg("radiance_surface.log", std::ios::trunc);
+    auto log = [&](const std::string &s) { dbg << s << "\n"; dbg.flush(); };
     VkResult result;
 #if defined(_WIN32)
     if (p_glfwGetWin32Window == nullptr) {
-        std::cerr << "[Window] glfwGetWin32Window is not resolved!" << std::endl;
+        log("glfwGetWin32Window is not resolved!");
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
     HWND hwnd = reinterpret_cast<HWND>(GLFW_GetWin32Window(window_));
-    std::cerr << "[Window] glfwWindow=" << window_ << " hwnd=" << hwnd << std::endl;
+    {
+        std::ostringstream ss;
+        ss << "glfwWindow=" << window_ << " hwnd=" << hwnd;
+        log(ss.str());
+    }
     if (hwnd == nullptr) {
-        std::cerr << "[Window] glfwGetWin32Window returned a null HWND!" << std::endl;
+        log("glfwGetWin32Window returned a null HWND!");
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
     if (vkCreateWin32SurfaceKHR == nullptr) {
-        std::cerr << "[Window] vkCreateWin32SurfaceKHR was not loaded by volk!" << std::endl;
+        log("vkCreateWin32SurfaceKHR was not loaded by volk!");
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
@@ -57,18 +69,26 @@ vk::Window::Window(std::shared_ptr<Instance> instance, GLFWwindow *window_) : in
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     createInfo.hinstance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
     createInfo.hwnd = hwnd;
-    std::cerr << "[Window] creating Win32 surface (hinstance=" << createInfo.hinstance << ")..." << std::endl;
+    {
+        std::ostringstream ss;
+        ss << "creating Win32 surface (hinstance=" << createInfo.hinstance << ")...";
+        log(ss.str());
+    }
     result = vkCreateWin32SurfaceKHR(instance_->vkInstance(), &createInfo, nullptr, &surface_);
-    std::cerr << "[Window] vkCreateWin32SurfaceKHR result=" << result << " surface=" << surface_ << std::endl;
+    {
+        std::ostringstream ss;
+        ss << "vkCreateWin32SurfaceKHR result=" << result << " surface=" << surface_;
+        log(ss.str());
+    }
 #else
     result = GLFW_CreateWindowSurface(instance_->vkInstance(), window_, nullptr, &surface_);
 #endif
     if (result != VK_SUCCESS) {
-        std::cerr << "Cannot create vulkan window surface!" << std::endl;
+        log("Cannot create vulkan window surface!");
         GLFW_Terminate();
         exit(EXIT_FAILURE);
     }
-    std::cerr << "[Window] surface created OK; proceeding to physical-device/swapchain" << std::endl;
+    log("surface created OK; proceeding to physical-device/swapchain");
 }
 
 vk::Window::~Window() {
