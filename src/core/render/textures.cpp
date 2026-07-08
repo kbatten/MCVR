@@ -19,7 +19,9 @@ Textures::Textures(std::shared_ptr<Framework> framework) {}
 void Textures::reset() {
     textures_.clear();
     if (emission_ != nullptr) { emission_->reset(); }
-    nextID = 0;
+    // Mod-internal texture ids are allocated from the top of the 4096-entry descriptor array
+    // downward so they never collide with MC-owned GL ids (assigned from the bottom up).
+    nextID = 4095;
 }
 
 void Textures::resetFrame() {
@@ -42,7 +44,7 @@ uint32_t Textures::allocateTexture() {
 
     textures_.emplace(std::make_pair(nextID, nullptr));
     samplers.emplace(std::make_pair(nextID, nullptr));
-    return nextID++;
+    return nextID--;  // allocate downward from the top of the descriptor array (see reset())
 }
 
 void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width, uint32_t height, VkFormat format) {
@@ -54,8 +56,12 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
 
     auto textureIter = textures_.find(id);
     if (textureIter == textures_.end()) {
-        texturesCerr() << "The given texture id: " << id << " is not allocated for texture" << std::endl;
-        exit(EXIT_FAILURE);
+        // 26.2: texture ids are MC-owned GL ids (GlTexture.glId()) that were never handed out by
+        // allocateTexture(), so allocate the slot on demand instead of failing. allocateTexture()
+        // hands out mod-internal ids from the top of the 4096-entry descriptor array downward, so
+        // GL ids (assigned from the bottom up by the driver) do not collide with them.
+        textures_.emplace(id, nullptr);
+        samplers.emplace(id, nullptr);
     }
 
     framework->frameResourceRetainer().retain(textures_[id]);

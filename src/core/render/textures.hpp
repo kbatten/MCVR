@@ -53,7 +53,8 @@ class Textures : public SharedObject<Textures> {
     std::map<uint32_t, std::shared_ptr<vk::DeviceLocalImage>> textures_;
     std::map<uint32_t, std::shared_ptr<vk::Sampler>> samplers;
     std::shared_ptr<Emission> emission_;
-    uint32_t nextID = 0;
+    // Mod-internal texture ids allocated top-down from the 4096-entry descriptor array (see reset()).
+    uint32_t nextID = 4095;
     std::recursive_mutex mtx_;
 
     std::map<uint32_t, std::shared_ptr<ImageBufferCache>> caches_;
