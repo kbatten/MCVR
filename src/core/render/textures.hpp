@@ -69,6 +69,9 @@ class Textures : public SharedObject<Textures> {
 
   private:
     static constexpr size_t UPLOAD_FLUSH_THRESHOLD = 64 * 1024 * 1024;
+    // Flush after this many distinct queued textures even below the byte threshold (bounds the
+    // first-frame flush after a resource reload -- see queueUpload).
+    static constexpr size_t UPLOAD_FLUSH_TEXTURE_COUNT = 128;
 
     std::shared_ptr<vk::HostVisibleBuffer> acquireUploadStagingBuffer(size_t minSize);
     std::shared_ptr<vk::Fence> acquireUploadFence();

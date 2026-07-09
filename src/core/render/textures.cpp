@@ -207,7 +207,14 @@ void Textures::queueUpload(uint8_t *srcPointer,
     dstTextureUploadQueueIter->second.emplace_back(region);
 
     queuedUploadBytes_ += srcSizeInBytes;
-    if (queuedUploadBytes_ >= UPLOAD_FLUSH_THRESHOLD) { flushQueuedUploadImpl(); }
+    // Also flush once enough distinct textures are queued: a resource reload uploads thousands of
+    // small textures that never reach the 64MB byte threshold, so without this they all defer into a
+    // single giant first-frame flush that allocates a staging buffer per texture at once and exhausts
+    // memory / the allocation limit. Flushing in bounded batches keeps allocations low and lets
+    // collectCompletedUploadsImpl recycle staging buffers between batches.
+    if (queuedUploadBytes_ >= UPLOAD_FLUSH_THRESHOLD || uploadQueue_->size() >= UPLOAD_FLUSH_TEXTURE_COUNT) {
+        flushQueuedUploadImpl();
+    }
 }
 
 void Textures::performQueuedUpload() {
