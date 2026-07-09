@@ -11,6 +11,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <exception>
+#include <fstream>
+#include <typeinfo>
 #include <unordered_map>
 
 #if defined(_WIN32)
@@ -132,6 +135,29 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_RendererProxy_initR
     freopen("radiance_native.log", "w", stderr);
     setvbuf(stderr, nullptr, _IONBF, 0);
 #endif
+    // 0xC0000409 with no C++ stack is most often an unhandled C++ exception (std::terminate ->
+    // abort). Log what it actually is to radiance_terminate.log before dying, so we can name the
+    // failure instead of guessing. (If the file stays empty after a crash it wasn't a C++ throw --
+    // e.g. a real stack/heap-buffer overrun -- which is itself a useful signal.)
+    std::set_terminate([]() {
+        std::ofstream tf("radiance_terminate.log", std::ios::trunc);
+        tf << "std::terminate: ";
+        if (std::exception_ptr e = std::current_exception()) {
+            try {
+                std::rethrow_exception(e);
+            } catch (const std::exception &ex) {
+                tf << "C++ exception [" << typeid(ex).name() << "]: " << ex.what();
+            } catch (...) {
+                tf << "unknown (non-std) C++ exception";
+            }
+        } else {
+            tf << "no active exception (native fault, not a throw)";
+        }
+        tf << std::endl;
+        tf.flush();
+        std::abort();
+    });
+
     DYNLIB_HANDLE h = bind_handle_from_candidates(env, candidates);
     if (!h) {
         std::cerr << "[GLFW-Bind] Could not find already-loaded GLFW via NOLOAD/GetModuleHandle."
