@@ -3,6 +3,8 @@
 #include "core/render/modules/world/dlss/dlss_wrapper.hpp"
 #include "core/render/modules/world/xess_upscaler/xess_wrapper.hpp"
 
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <unordered_set>
@@ -34,6 +36,53 @@ VkBool32 debugCallback(VkDebugReportFlagsEXT flags,
     }
 
     return VK_FALSE;
+}
+
+// Route Khronos validation output to a dedicated, explicitly-flushed file. radiance_surface.log is
+// truncated later by Window (surface creation) and appended to by PhysicalDevice, so validation
+// messages emitted during instance creation would be clobbered there -- keep them separate.
+static std::ofstream &validationLog() {
+    static std::ofstream f("radiance_validation.log", std::ios::trunc);
+    return f;
+}
+
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugUtilsCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+                                                         VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+                                                         const VkDebugUtilsMessengerCallbackDataEXT *data,
+                                                         void * /*pUserData*/) {
+    const char *level = "INFO";
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        level = "ERROR";
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        level = "WARNING";
+    }
+    validationLog() << "[" << level << "] " << (data && data->pMessageIdName ? data->pMessageIdName : "")
+                    << ": " << (data && data->pMessage ? data->pMessage : "") << "\n";
+    validationLog().flush();
+    return VK_FALSE;
+}
+
+static VkDebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo() {
+    VkDebugUtilsMessengerCreateInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    info.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    info.pfnUserCallback = debugUtilsCallback;
+    return info;
+}
+
+static bool isValidationLayerAvailable() {
+    uint32_t count = 0;
+    if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS || count == 0) { return false; }
+    std::vector<VkLayerProperties> layers(count);
+    if (vkEnumerateInstanceLayerProperties(&count, layers.data()) != VK_SUCCESS) { return false; }
+    for (const auto &layer : layers) {
+        if (std::string(layer.layerName) == DEBUG_LAYER) { return true; }
+    }
+    return false;
 }
 
 vk::Instance::Instance() {
@@ -119,9 +168,13 @@ vk::Instance::Instance() {
     // repeated for dlss, but make sure
     extStorage.insert(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
-#ifdef DEBUG
-    extStorage.insert(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-#endif
+    // Enable Khronos validation whenever the layer is installed on the system (Vulkan SDK / layer
+    // redistributable). On player machines without it this is a no-op; on a dev box it self-activates
+    // even in Release/RelWithDebInfo -- where the DEBUG compile define is off -- and routes messages
+    // to radiance_validation.log via the messenger below. Opt out with RADIANCE_NO_VALIDATION=1.
+    const bool validationEnabled =
+        (std::getenv("RADIANCE_NO_VALIDATION") == nullptr) && isValidationLayerAvailable();
+    if (validationEnabled) { extStorage.insert(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); }
 
     // Check for extensions
     uint32_t extensionCount = 0;
@@ -188,22 +241,15 @@ vk::Instance::Instance() {
     createInfo.enabledExtensionCount = (uint32_t)extensions.size();
     createInfo.ppEnabledExtensionNames = extensions.data();
 
-#ifdef DEBUG
-    createInfo.enabledLayerCount = 1;
-    createInfo.ppEnabledLayerNames = &DEBUG_LAYER;
-
-    // VkValidationFeatureEnableEXT enables[] = {
-    //     VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
-    //     VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
-    // };
-
-    // VkValidationFeaturesEXT validationFeatures = {};
-    // validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
-    // validationFeatures.enabledValidationFeatureCount = 2;
-    // validationFeatures.pEnabledValidationFeatures = enables;
-
-    // createInfo.pNext = &validationFeatures;
-#endif
+    // Chain the messenger create-info into pNext so validation messages emitted *during*
+    // vkCreateInstance/vkDestroyInstance are captured too, not just runtime ones. Must outlive the
+    // vkCreateInstance call below (it does -- same scope).
+    VkDebugUtilsMessengerCreateInfoEXT messengerInfo = makeDebugMessengerCreateInfo();
+    if (validationEnabled) {
+        createInfo.enabledLayerCount = 1;
+        createInfo.ppEnabledLayerNames = &DEBUG_LAYER;
+        createInfo.pNext = &messengerInfo;
+    }
 
     // Initialize Vulkan instance
     if (vkCreateInstance(&createInfo, nullptr, &instance_) != VK_SUCCESS) {
@@ -216,9 +262,28 @@ vk::Instance::Instance() {
     }
 
     volkLoadInstance(instance_);
+
+    // Persistent messenger for runtime validation messages (the pNext one above only covers instance
+    // create/destroy). vkCreateDebugUtilsMessengerEXT is loaded by volkLoadInstance now that
+    // VK_EXT_debug_utils is enabled.
+    if (validationEnabled && vkCreateDebugUtilsMessengerEXT != nullptr) {
+        VkDebugUtilsMessengerCreateInfoEXT persistentInfo = makeDebugMessengerCreateInfo();
+        VkResult messengerResult =
+            vkCreateDebugUtilsMessengerEXT(instance_, &persistentInfo, nullptr, &debugMessenger_);
+        if (messengerResult != VK_SUCCESS) {
+            debugMessenger_ = VK_NULL_HANDLE;
+            instanceCerr() << "failed to create debug utils messenger: " << messengerResult << std::endl;
+        } else {
+            validationLog() << "[Instance] Khronos validation active -> radiance_validation.log\n";
+            validationLog().flush();
+        }
+    }
 }
 
 vk::Instance::~Instance() {
+    if (debugMessenger_ != VK_NULL_HANDLE && vkDestroyDebugUtilsMessengerEXT != nullptr) {
+        vkDestroyDebugUtilsMessengerEXT(instance_, debugMessenger_, nullptr);
+    }
     vkDestroyInstance(instance_, nullptr);
 
 #ifdef DEBUG

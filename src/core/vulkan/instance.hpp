@@ -16,6 +16,6 @@ class Instance : public SharedObject<Instance> {
     VkInstance instance_;
     bool dlssInstanceExtensionsCompatible_ = false;
     bool xessInstanceExtensionsCompatible_ = false;
-    // VkDebugReportCallbackEXT callback_ = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT debugMessenger_ = VK_NULL_HANDLE;
 };
 } // namespace vk
