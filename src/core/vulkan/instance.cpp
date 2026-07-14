@@ -3,6 +3,7 @@
 #include "core/render/modules/world/dlss/dlss_wrapper.hpp"
 #include "core/render/modules/world/xess_upscaler/xess_wrapper.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -74,15 +75,15 @@ static VkDebugUtilsMessengerCreateInfoEXT makeDebugMessengerCreateInfo() {
     return info;
 }
 
-static bool isValidationLayerAvailable() {
+static std::vector<std::string> enumerateInstanceLayerNames() {
     uint32_t count = 0;
-    if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS || count == 0) { return false; }
+    if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS || count == 0) { return {}; }
     std::vector<VkLayerProperties> layers(count);
-    if (vkEnumerateInstanceLayerProperties(&count, layers.data()) != VK_SUCCESS) { return false; }
-    for (const auto &layer : layers) {
-        if (std::string(layer.layerName) == DEBUG_LAYER) { return true; }
-    }
-    return false;
+    if (vkEnumerateInstanceLayerProperties(&count, layers.data()) != VK_SUCCESS) { return {}; }
+    std::vector<std::string> names;
+    names.reserve(count);
+    for (const auto &layer : layers) { names.emplace_back(layer.layerName); }
+    return names;
 }
 
 vk::Instance::Instance() {
@@ -172,8 +173,27 @@ vk::Instance::Instance() {
     // redistributable). On player machines without it this is a no-op; on a dev box it self-activates
     // even in Release/RelWithDebInfo -- where the DEBUG compile define is off -- and routes messages
     // to radiance_validation.log via the messenger below. Opt out with RADIANCE_NO_VALIDATION=1.
-    const bool validationEnabled =
-        (std::getenv("RADIANCE_NO_VALIDATION") == nullptr) && isValidationLayerAvailable();
+    const std::vector<std::string> availableLayers = enumerateInstanceLayerNames();
+    const bool layerFound =
+        std::find(availableLayers.begin(), availableLayers.end(), DEBUG_LAYER) != availableLayers.end();
+    const bool optedOut = std::getenv("RADIANCE_NO_VALIDATION") != nullptr;
+    const bool validationEnabled = layerFound && !optedOut;
+
+    // Always write a status block so radiance_validation.log is created on every run: an empty/missing
+    // file is otherwise ambiguous (validation layer absent vs. a stale core.dll that predates this
+    // code). The build marker pins which DLL actually ran; the layer list shows what the loader saw.
+    {
+        auto &log = validationLog();
+        log << "[Instance] radiance validation status (core.dll built " << __DATE__ << " " << __TIME__
+            << ")\n";
+        log << "  target layer " << DEBUG_LAYER << ": found=" << (layerFound ? "yes" : "no")
+            << " optedOut=" << (optedOut ? "yes" : "no") << " -> validation "
+            << (validationEnabled ? "ENABLED" : "disabled") << "\n";
+        log << "  " << availableLayers.size() << " instance layer(s) enumerated:\n";
+        for (const auto &name : availableLayers) { log << "    " << name << "\n"; }
+        log.flush();
+    }
+
     if (validationEnabled) { extStorage.insert(VK_EXT_DEBUG_UTILS_EXTENSION_NAME); }
 
     // Check for extensions
