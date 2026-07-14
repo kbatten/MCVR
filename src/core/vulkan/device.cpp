@@ -5,6 +5,7 @@
 #include "core/vulkan/instance.hpp"
 #include "core/vulkan/physical_device.hpp"
 
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <unordered_set>
@@ -322,6 +323,15 @@ vk::Device::Device(std::shared_ptr<Instance> instance,
     features.shaderInt16 = supportedFeatures2.features.shaderInt16;
     features.shaderStorageImageReadWithoutFormat = supportedFeatures2.features.shaderStorageImageReadWithoutFormat;
     features.shaderStorageImageWriteWithoutFormat = supportedFeatures2.features.shaderStorageImageWriteWithoutFormat;
+
+    // GPU-assisted validation (opt-in via RADIANCE_GPU_AV, see instance.cpp) instruments vertex/
+    // fragment shaders to write error records through storage buffers + atomics, which requires these
+    // features enabled. Only turned on when GPU-AV is requested and the device supports them, so
+    // normal runs are byte-for-byte unchanged.
+    if (std::getenv("RADIANCE_GPU_AV") != nullptr) {
+        features.vertexPipelineStoresAndAtomics = supportedFeatures2.features.vertexPipelineStoresAndAtomics;
+        features.fragmentStoresAndAtomics = supportedFeatures2.features.fragmentStoresAndAtomics;
+    }
 
     VkPhysicalDeviceFeatures2 features2 = {};
     features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;

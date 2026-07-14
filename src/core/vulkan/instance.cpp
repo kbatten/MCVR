@@ -178,6 +178,13 @@ vk::Instance::Instance() {
         std::find(availableLayers.begin(), availableLayers.end(), DEBUG_LAYER) != availableLayers.end();
     const bool optedOut = std::getenv("RADIANCE_NO_VALIDATION") != nullptr;
     const bool validationEnabled = layerFound && !optedOut;
+    // GPU-assisted validation instruments shaders to catch GPU-side out-of-bounds descriptor access /
+    // bad reads that CPU-side validation cannot see (e.g. sampling a freed bindless texture slot ->
+    // page fault -> TDR). Opt-in via RADIANCE_GPU_AV=1: it is heavy and reserves a descriptor set, so
+    // it stays off by default even when validation is on. Requires the two atomics device features
+    // enabled in device.cpp (also gated on RADIANCE_GPU_AV) so fragment/vertex shaders can be
+    // instrumented.
+    const bool gpuAvEnabled = validationEnabled && std::getenv("RADIANCE_GPU_AV") != nullptr;
 
     // Always write a status block so radiance_validation.log is created on every run: an empty/missing
     // file is otherwise ambiguous (validation layer absent vs. a stale core.dll that predates this
@@ -189,6 +196,8 @@ vk::Instance::Instance() {
         log << "  target layer " << DEBUG_LAYER << ": found=" << (layerFound ? "yes" : "no")
             << " optedOut=" << (optedOut ? "yes" : "no") << " -> validation "
             << (validationEnabled ? "ENABLED" : "disabled") << "\n";
+        log << "  GPU-assisted validation: " << (gpuAvEnabled ? "ENABLED (RADIANCE_GPU_AV)" : "off")
+            << "\n";
         log << "  " << availableLayers.size() << " instance layer(s) enumerated:\n";
         for (const auto &name : availableLayers) { log << "    " << name << "\n"; }
         log.flush();
@@ -265,10 +274,26 @@ vk::Instance::Instance() {
     // vkCreateInstance/vkDestroyInstance are captured too, not just runtime ones. Must outlive the
     // vkCreateInstance call below (it does -- same scope).
     VkDebugUtilsMessengerCreateInfoEXT messengerInfo = makeDebugMessengerCreateInfo();
+    // GPU-AV is requested via VkValidationFeaturesEXT chained into pNext (read by the validation
+    // layer, which provides VK_EXT_validation_features -- so it is NOT added to the extension list).
+    // These locals also outlive vkCreateInstance below (same scope).
+    VkValidationFeatureEnableEXT gpuAvFeatures[] = {
+        VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT,
+        VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT,
+    };
+    VkValidationFeaturesEXT validationFeatures{};
+    validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
     if (validationEnabled) {
         createInfo.enabledLayerCount = 1;
         createInfo.ppEnabledLayerNames = &DEBUG_LAYER;
         createInfo.pNext = &messengerInfo;
+        if (gpuAvEnabled) {
+            validationFeatures.enabledValidationFeatureCount =
+                static_cast<uint32_t>(sizeof(gpuAvFeatures) / sizeof(gpuAvFeatures[0]));
+            validationFeatures.pEnabledValidationFeatures = gpuAvFeatures;
+            validationFeatures.pNext = &messengerInfo;  // chain: createInfo -> features -> messenger
+            createInfo.pNext = &validationFeatures;
+        }
     }
 
     // Initialize Vulkan instance
