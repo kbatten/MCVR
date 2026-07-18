@@ -90,6 +90,37 @@ std::shared_ptr<vk::DescriptorTable> vk::DescriptorTable::bindSamplerImage(std::
     return shared_from_this();
 }
 
+std::shared_ptr<vk::DescriptorTable> vk::DescriptorTable::bindSamplerImageRange(std::shared_ptr<Sampler> sampler,
+                                                                                std::shared_ptr<Image> image,
+                                                                                VkImageLayout layout,
+                                                                                uint32_t set,
+                                                                                uint32_t binding,
+                                                                                uint32_t firstIndex,
+                                                                                uint32_t count,
+                                                                                uint32_t viewIndex) {
+    if (count == 0) { return shared_from_this(); }
+
+    VkDescriptorImageInfo descriptorImageInfo{};
+    descriptorImageInfo.sampler = sampler->vkSamper();
+    descriptorImageInfo.imageView = image->vkImageView(viewIndex);
+    descriptorImageInfo.imageLayout = layout;
+
+    std::vector<VkDescriptorImageInfo> descriptorImageInfos(count, descriptorImageInfo);
+
+    VkWriteDescriptorSet writeDescriptorSet = {};
+    writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDescriptorSet.dstSet = table_[set];
+    writeDescriptorSet.descriptorCount = count;
+    writeDescriptorSet.descriptorType = tableTypes_[set][binding];
+    writeDescriptorSet.pImageInfo = descriptorImageInfos.data();
+    writeDescriptorSet.dstBinding = binding;
+    writeDescriptorSet.dstArrayElement = firstIndex;
+
+    vkUpdateDescriptorSets(device_->vkDevice(), 1, &writeDescriptorSet, 0, nullptr);
+
+    return shared_from_this();
+}
+
 std::shared_ptr<vk::DescriptorTable> vk::DescriptorTable::bindImageForShader(std::shared_ptr<Image> image,
                                                                              uint32_t set,
                                                                              uint32_t binding,

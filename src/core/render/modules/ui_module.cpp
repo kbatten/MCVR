@@ -207,13 +207,15 @@ const OverlayDynamicDrawShaderInfo &UIModule::overlayDrawShaderInfo(uint32_t sha
 std::shared_ptr<vk::DescriptorTable> UIModule::createOverlayDescriptorTable() {
     auto framework = framework_.lock();
 
-    return vk::DescriptorTableBuilder{}
+    ensureOverlayFallbackTexture();
+
+    auto descriptorTable = vk::DescriptorTableBuilder{}
         .beginDescriptorLayoutSet()
         .beginDescriptorLayoutSetBinding()
         .defineDescriptorLayoutSetBinding({
             .binding = 0,
             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 4096,
+            .descriptorCount = OVERLAY_TEXTURE_SLOT_COUNT,
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         })
         .defineDescriptorLayoutSetBinding({
@@ -241,6 +243,79 @@ std::shared_ptr<vk::DescriptorTable> UIModule::createOverlayDescriptorTable() {
         .endDescriptorLayoutSetBinding()
         .endDescriptorLayoutSet()
         .build(framework->device());
+
+    // The bindless array is indexed by texture id, and ids MC never routed through
+    // initializeTexture() leave their slot unwritten. PARTIALLY_BOUND makes leaving a slot unwritten
+    // legal, but *sampling* one is undefined -- on NVIDIA it resolves an uninitialized descriptor,
+    // which faults the GPU and takes the whole device down via TDR. Seed every slot up front so an
+    // unbound id samples transparent black instead.
+    descriptorTable->bindSamplerImageRange(overlayFallbackSampler_, overlayFallbackImage_,
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 0, 0,
+                                           OVERLAY_TEXTURE_SLOT_COUNT);
+
+    return descriptorTable;
+}
+
+void UIModule::ensureOverlayFallbackTexture() {
+    if (overlayFallbackImage_ != nullptr) { return; }
+
+    auto framework = framework_.lock();
+    auto device = framework->device();
+
+    overlayFallbackImage_ =
+        vk::DeviceLocalImage::create(device, framework->vma(), false, 1, 1, 1, 1, VK_FORMAT_R8G8B8A8_UNORM,
+                                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0,
+                                     VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0
+#ifdef DEBUG
+                                     ,
+                                     "Overlay fallback texture"
+#endif
+        );
+    overlayFallbackSampler_ =
+        vk::Sampler::create(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+
+    // A freshly created image is in UNDEFINED layout with undefined contents, so it has to be
+    // cleared and transitioned before it can be sampled -- an unsampleable fallback would defeat the
+    // purpose. One-time init, so a device-idle wait is cheaper than plumbing a fence through.
+    auto mainQueueIndex = framework->physicalDevice()->mainQueueIndex();
+    auto cmdBuffer = vk::CommandBuffer::create(device, framework->mainCommandPool());
+    cmdBuffer->begin();
+
+    cmdBuffer->barriersBufferImage({}, {{
+                                           .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                           .srcAccessMask = VK_ACCESS_2_NONE,
+                                           .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                           .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .srcQueueFamilyIndex = mainQueueIndex,
+                                           .dstQueueFamilyIndex = mainQueueIndex,
+                                           .image = overlayFallbackImage_,
+                                           .subresourceRange = vk::wholeColorSubresourceRange,
+                                       }});
+
+    VkClearColorValue clearColor{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}};
+    vkCmdClearColorImage(cmdBuffer->vkCommandBuffer(), overlayFallbackImage_->vkImage(),
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &vk::wholeColorSubresourceRange);
+
+    cmdBuffer->barriersBufferImage({}, {{
+                                           .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                           .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                           .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                           .srcQueueFamilyIndex = mainQueueIndex,
+                                           .dstQueueFamilyIndex = mainQueueIndex,
+                                           .image = overlayFallbackImage_,
+                                           .subresourceRange = vk::wholeColorSubresourceRange,
+                                       }});
+    overlayFallbackImage_->imageLayout() = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    cmdBuffer->end();
+    cmdBuffer->submitMainQueueIndividual(device);
+    framework->waitDeviceIdle();
 }
 
 void UIModule::bindOverlayDescriptorTableResources(std::shared_ptr<vk::DescriptorTable> descriptorTable,

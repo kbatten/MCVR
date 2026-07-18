@@ -58,6 +58,11 @@ class UIModule : public SharedObject<UIModule> {
     friend UIModuleContext;
 
   public:
+    // Size of the overlay bindless combined-image-sampler array (set 0, binding 0). Texture ids
+    // index directly into it, so every slot must hold a valid descriptor -- see
+    // ensureOverlayFallbackTexture().
+    static constexpr uint32_t OVERLAY_TEXTURE_SLOT_COUNT = 4096;
+
     UIModule();
     ~UIModule();
 
@@ -81,6 +86,7 @@ class UIModule : public SharedObject<UIModule> {
     std::shared_ptr<vk::DescriptorTable> createOverlayDescriptorTable();
     void bindOverlayDescriptorTableResources(std::shared_ptr<vk::DescriptorTable> descriptorTable, uint32_t frameIndex);
     void initOverlayDescriptorTablesAndFrameSamplers();
+    void ensureOverlayFallbackTexture();
 
     void initOverlayDrawImages();
     void initOverlayDrawRenderPass();
@@ -103,6 +109,10 @@ class UIModule : public SharedObject<UIModule> {
     std::unordered_map<std::string, uint32_t> overlayDynamicDrawShaderIds_;
     std::vector<OverlayDynamicDrawShaderInfo> overlayDynamicDrawShaders_;
     std::unordered_map<int, OverlayTextureBinding> overlayTextureBindings_;
+    // 1x1 texture every overlay bindless slot is seeded with, so a slot that no texture has been
+    // bound into still resolves to a valid descriptor instead of uninitialized memory.
+    std::shared_ptr<vk::DeviceLocalImage> overlayFallbackImage_;
+    std::shared_ptr<vk::Sampler> overlayFallbackSampler_;
 
     std::vector<std::shared_ptr<vk::DeviceLocalImage>> overlayPostColorImages_;
     std::vector<std::shared_ptr<vk::Sampler>> overlayDrawColorImageSamplers_;

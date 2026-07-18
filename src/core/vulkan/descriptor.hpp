@@ -41,6 +41,17 @@ class DescriptorTable : public SharedObject<DescriptorTable> {
                                                       uint32_t binding,
                                                       uint32_t index,
                                                       uint32_t viewIndex = 0);
+    // Writes the same sampler+image into `count` consecutive array elements in a single
+    // vkUpdateDescriptorSets call. Used to seed large bindless arrays, where issuing one update per
+    // element would cost thousands of driver calls.
+    std::shared_ptr<DescriptorTable> bindSamplerImageRange(std::shared_ptr<Sampler> sampler,
+                                                           std::shared_ptr<Image> image,
+                                                           VkImageLayout layout,
+                                                           uint32_t set,
+                                                           uint32_t binding,
+                                                           uint32_t firstIndex,
+                                                           uint32_t count,
+                                                           uint32_t viewIndex = 0);
     std::shared_ptr<DescriptorTable>
     bindImageForShader(std::shared_ptr<Image> image, uint32_t set, uint32_t binding, uint32_t viewIndex = 0);
     std::shared_ptr<DescriptorTable> bindSamplerImageForShader(std::shared_ptr<Sampler> sampler,
