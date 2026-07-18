@@ -173,6 +173,26 @@ void Textures::queueUpload(uint8_t *srcPointer,
     }
     auto dstTexture = (*dstTextureIter).second;
 
+    // MC validates every writeToTexture against its own GpuTexture extent before we ever see it, so
+    // a region that overruns *our* image means textures_[dstId] is stale -- it is still the image of
+    // an earlier texture that held this GL id. (prepareImage silently ignores the 52 of 56 GpuFormats
+    // it cannot map, and nothing unregisters an id when MC closes a texture, so a recycled id can
+    // keep pointing at the previous texture's image.) Issuing the copy anyway writes outside the
+    // image allocation, which faults the GPU and takes the whole device down via TDR. Drop it
+    // instead, loudly, so the mismatch is diagnosable without killing the process.
+    uint32_t levelWidth = dstTexture->width() >> level;
+    uint32_t levelHeight = dstTexture->height() >> level;
+    if (levelWidth == 0) { levelWidth = 1; }
+    if (levelHeight == 0) { levelHeight = 1; }
+    if (dstOffsetX < 0 || dstOffsetY < 0 || static_cast<uint32_t>(dstOffsetX) + width > levelWidth ||
+        static_cast<uint32_t>(dstOffsetY) + height > levelHeight) {
+        texturesCerr() << "SKIP out-of-bounds upload: dstId=" << dstId << " level=" << level << " region=" << width
+                       << "x" << height << "@" << dstOffsetX << "," << dstOffsetY << " exceeds level extent "
+                       << levelWidth << "x" << levelHeight << " (image " << dstTexture->width() << "x"
+                       << dstTexture->height() << ", format=" << dstTexture->vkFormat() << ")" << std::endl;
+        return;
+    }
+
     auto cacheIter = caches_.find(dstId);
     if (cacheIter == caches_.end()) {
         cacheIter = caches_
