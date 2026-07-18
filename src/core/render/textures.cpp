@@ -78,6 +78,19 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
         }
     }
 
+    // Uploads queued for this id were sized against the image we are about to replace, but
+    // flushQueuedUploadImpl() resolves textures_[id] at *flush* time. Leaving them queued replays
+    // the old texture's extent into the new (often smaller) image -- an out-of-bounds GPU write that
+    // faults the device. MC re-uploads the new texture's contents itself, so dropping them is safe.
+    if (uploadQueue_ != nullptr) {
+        auto queuedIter = uploadQueue_->find(id);
+        if (queuedIter != uploadQueue_->end()) {
+            texturesCerr() << "dropping " << queuedIter->second.size() << " stale queued upload(s) for re-initialized id="
+                           << id << std::endl;
+            uploadQueue_->erase(queuedIter);
+        }
+    }
+
     framework->frameResourceRetainer().retain(textures_[id]);
 #ifdef DEBUG
     if (textures_[id] != nullptr) { std::cout << "Textrue reinitialized: " << id << std::endl; }
@@ -371,8 +384,34 @@ void Textures::flushQueuedUploadImpl() {
         if (cacheIter == caches_.end()) { continue; }
         auto cache = cacheIter->second;
 
+        // Last line of defence before the GPU: a region is only valid against the image that was
+        // registered when it was queued, and this loop resolves textures_[textureId] fresh. Anything
+        // that no longer fits would write outside the image allocation and fault the device, so drop
+        // it here rather than submit it.
+        std::vector<VkBufferImageCopy> safeRegions;
+        safeRegions.reserve(regions.size());
+        for (const auto &region : regions) {
+            uint32_t levelWidth = texture->width() >> region.imageSubresource.mipLevel;
+            uint32_t levelHeight = texture->height() >> region.imageSubresource.mipLevel;
+            if (levelWidth == 0) { levelWidth = 1; }
+            if (levelHeight == 0) { levelHeight = 1; }
+            if (region.imageOffset.x < 0 || region.imageOffset.y < 0 ||
+                static_cast<uint32_t>(region.imageOffset.x) + region.imageExtent.width > levelWidth ||
+                static_cast<uint32_t>(region.imageOffset.y) + region.imageExtent.height > levelHeight) {
+                texturesCerr() << "SKIP stale upload region: id=" << textureId
+                               << " level=" << region.imageSubresource.mipLevel
+                               << " region=" << region.imageExtent.width << "x" << region.imageExtent.height << "@"
+                               << region.imageOffset.x << "," << region.imageOffset.y << " exceeds level extent "
+                               << levelWidth << "x" << levelHeight << " (image " << texture->width() << "x"
+                               << texture->height() << ")" << std::endl;
+                continue;
+            }
+            safeRegions.push_back(region);
+        }
+        if (safeRegions.empty()) { continue; }
+
         vkCmdCopyBufferToImage(cmdBuffer->vkCommandBuffer(), cache->vkBuffer(), texture->vkImage(),
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, regions.size(), regions.data());
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, safeRegions.size(), safeRegions.data());
 
         cmdBuffer->barriersBufferImage(
             {}, {{
