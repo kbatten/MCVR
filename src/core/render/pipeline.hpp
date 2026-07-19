@@ -113,6 +113,9 @@ class Pipeline : public SharedObject<Pipeline> {
     std::shared_ptr<PipelineContext> acquirePipelineContext(std::shared_ptr<FrameworkContext> context);
     std::vector<std::shared_ptr<PipelineContext>> &contexts();
     void bindTexture(std::shared_ptr<vk::Sampler> sampler, std::shared_ptr<vk::DeviceLocalImage> image, int index);
+    // Cube textures are overlay-only (the panorama), so this forwards to the UI module alone.
+    void bindCubeTexture(std::shared_ptr<vk::Sampler> sampler, std::shared_ptr<vk::DeviceLocalImage> image,
+                         int index);
 
     std::shared_ptr<UIModule> uiModule();
     std::shared_ptr<WorldPipeline> worldPipeline();

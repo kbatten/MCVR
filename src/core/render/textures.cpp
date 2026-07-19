@@ -115,6 +115,100 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
     Renderer::instance().framework()->pipeline()->bindTexture(samplers[id], textures_[id], id);
 }
 
+void Textures::prepareCubeImage(uint32_t id, uint32_t maxLevel, uint32_t faceWidth, uint32_t faceHeight,
+                                VkFormat format) {
+    auto framework = Renderer::instance().framework();
+    auto device = framework->device();
+    auto vma = framework->vma();
+
+    std::scoped_lock lck(mtx_, framework->recreateMtx());
+
+    texturesCerr() << "prepareCubeImage id=" << id << " face=" << faceWidth << "x" << faceHeight
+                   << " maxLevel=" << maxLevel << " format=" << format << std::endl;
+
+    // Retain any previous cube (recycled GL id) so an in-flight frame still sampling it stays valid.
+    auto existing = cubeTextures_.find(id);
+    if (existing != cubeTextures_.end()) { framework->frameResourceRetainer().retain(existing->second); }
+    auto existingSampler = cubeSamplers_.find(id);
+    if (existingSampler != cubeSamplers_.end()) {
+        framework->frameResourceRetainer().retain(existingSampler->second);
+    }
+
+    // persistStaging so uploadCube can memcpy the six faces straight into the image's own staging
+    // buffer; depth 1, layer 6, cube-compatible so image.cpp gives it a VK_IMAGE_VIEW_TYPE_CUBE view.
+    cubeTextures_[id] = vk::DeviceLocalImage::create(
+        device, vma, true, maxLevel, faceWidth, faceHeight, 1, 6, format, VK_IMAGE_USAGE_SAMPLED_BIT, 0,
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
+#ifdef DEBUG
+        ,
+        "Cube texture " + std::to_string(id)
+#endif
+    );
+    // Cubemaps sample linearly with clamp-to-edge so the six faces meet without seams.
+    cubeSamplers_[id] = vk::Sampler::create(device, VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                            VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+
+    framework->pipeline()->bindCubeTexture(cubeSamplers_[id], cubeTextures_[id], id);
+}
+
+void Textures::uploadCube(uint32_t id, uint8_t *src) {
+    auto framework = Renderer::instance().framework();
+    auto device = framework->device();
+
+    std::scoped_lock lck(mtx_, framework->recreateMtx());
+
+    auto it = cubeTextures_.find(id);
+    if (it == cubeTextures_.end() || it->second == nullptr) {
+        texturesCerr() << "uploadCube: cube id " << id << " is not prepared" << std::endl;
+        return;
+    }
+    auto image = it->second;
+
+    // Copy all six stacked faces into the image's staging buffer (uploadToStagingBuffer sizes itself
+    // for the 6-layer image), then transition, copy every layer in one region (uploadToImage sets
+    // layerCount = 6), and transition to shader-read. One-time load at resource reload, so a
+    // device-idle wait is cheaper than threading a fence through -- same pattern as the fallbacks.
+    image->uploadToStagingBuffer(src);
+
+    auto mainQueueIndex = framework->physicalDevice()->mainQueueIndex();
+    auto cmdBuffer = vk::CommandBuffer::create(device, framework->mainCommandPool());
+    cmdBuffer->begin();
+
+    cmdBuffer->barriersBufferImage({}, {{
+                                           .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                           .srcAccessMask = VK_ACCESS_2_NONE,
+                                           .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                           .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .srcQueueFamilyIndex = mainQueueIndex,
+                                           .dstQueueFamilyIndex = mainQueueIndex,
+                                           .image = image,
+                                           .subresourceRange = vk::wholeColorSubresourceRange,
+                                       }});
+
+    image->uploadToImage(cmdBuffer);
+
+    cmdBuffer->barriersBufferImage({}, {{
+                                           .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                           .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                           .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                           .srcQueueFamilyIndex = mainQueueIndex,
+                                           .dstQueueFamilyIndex = mainQueueIndex,
+                                           .image = image,
+                                           .subresourceRange = vk::wholeColorSubresourceRange,
+                                       }});
+    image->imageLayout() = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    cmdBuffer->end();
+    cmdBuffer->submitMainQueueIndividual(device);
+    framework->waitDeviceIdle();
+}
+
 void Textures::setSamplingMode(uint32_t id, VkFilter samplingMode, VkSamplerMipmapMode mipmapMode) {
     auto device = Renderer::instance().framework()->device();
 

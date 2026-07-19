@@ -24,6 +24,23 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_prepar
     }
 }
 
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_prepareCubeImage(
+    JNIEnv *, jclass, jint id, jint maxLevel, jint faceWidth, jint faceHeight, jint format) {
+    auto textures = Renderer::instance().textures();
+    if (textures == nullptr) return;
+    auto vkFormat = static_cast<VkFormat>(format);
+    textures->prepareCubeImage(id, maxLevel, faceWidth, faceHeight, vkFormat);
+}
+
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_uploadCube(JNIEnv *,
+                                                                                    jclass,
+                                                                                    jint id,
+                                                                                    jlong srcPointer) {
+    auto textures = Renderer::instance().textures();
+    if (textures == nullptr) return;
+    textures->uploadCube(id, reinterpret_cast<uint8_t *>(srcPointer));
+}
+
 JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_TextureProxy_setFilter(
     JNIEnv *, jclass, jint id, jint samplingMode, jint mipmapMode) {
     auto textures = Renderer::instance().textures();

@@ -476,6 +476,12 @@ void Pipeline::bindTexture(std::shared_ptr<vk::Sampler> sampler,
     uiModule_->bindTexture(sampler, image, index);
 }
 
+void Pipeline::bindCubeTexture(std::shared_ptr<vk::Sampler> sampler,
+                               std::shared_ptr<vk::DeviceLocalImage> image,
+                               int index) {
+    uiModule_->bindCubeTexture(sampler, image, index);
+}
+
 std::shared_ptr<UIModule> Pipeline::uiModule() {
     return uiModule_;
 }

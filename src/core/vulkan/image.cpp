@@ -457,8 +457,14 @@ vk::DeviceLocalImage::DeviceLocalImage(std::shared_ptr<Device> device,
     }
 
     VkImageViewCreateInfo createInfo = {};
-    auto makeDefaultImageViewType = [](uint32_t depth, uint32_t layer) {
+    // A 6-layer cube-compatible image is sampled through a samplerCube (the overlay panorama), so its
+    // default view must be CUBE -- the layer count alone would otherwise select 2D_ARRAY, which a
+    // samplerCube descriptor cannot bind.
+    auto makeDefaultImageViewType = [imageCreateFlags](uint32_t depth, uint32_t layer) {
         if (depth > 1) { return VK_IMAGE_VIEW_TYPE_3D; }
+        if (layer == 6 && (imageCreateFlags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0) {
+            return VK_IMAGE_VIEW_TYPE_CUBE;
+        }
         return layer == 1 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     };
     createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;

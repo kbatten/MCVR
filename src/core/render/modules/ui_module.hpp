@@ -87,6 +87,10 @@ class UIModule : public SharedObject<UIModule> {
     const OverlayDynamicDrawShaderInfo &overlayDrawShaderInfo(uint32_t shaderId) const;
 
     void bindTexture(std::shared_ptr<vk::Sampler> sampler, std::shared_ptr<vk::DeviceLocalImage> image, int index);
+    // Bind a cube texture into the overlay cube bindless array (set 0, binding 2) at its GL id, the same
+    // id the sampler2D array is indexed by, so the packed uniform index needs no cube-specific mapping.
+    void bindCubeTexture(std::shared_ptr<vk::Sampler> sampler, std::shared_ptr<vk::DeviceLocalImage> image,
+                         int index);
     void refreshOverlayDescriptorTable(uint32_t frameIndex);
 
   private:
@@ -94,6 +98,7 @@ class UIModule : public SharedObject<UIModule> {
     void bindOverlayDescriptorTableResources(std::shared_ptr<vk::DescriptorTable> descriptorTable, uint32_t frameIndex);
     void initOverlayDescriptorTablesAndFrameSamplers();
     void ensureOverlayFallbackTexture();
+    void ensureOverlayFallbackCubeTexture();
 
     void initOverlayDrawImages();
     void initOverlayDrawRenderPass();
@@ -116,10 +121,16 @@ class UIModule : public SharedObject<UIModule> {
     std::unordered_map<std::string, uint32_t> overlayDynamicDrawShaderIds_;
     std::vector<OverlayDynamicDrawShaderInfo> overlayDynamicDrawShaders_;
     std::unordered_map<int, OverlayTextureBinding> overlayTextureBindings_;
+    // Cube textures bound into the overlay cube bindless array (binding 2), kept so they can be rebound
+    // when the descriptor table is recreated on swapchain refresh -- mirrors overlayTextureBindings_.
+    std::unordered_map<int, OverlayTextureBinding> overlayCubeTextureBindings_;
     // 1x1 texture every overlay bindless slot is seeded with, so a slot that no texture has been
     // bound into still resolves to a valid descriptor instead of uninitialized memory.
     std::shared_ptr<vk::DeviceLocalImage> overlayFallbackImage_;
     std::shared_ptr<vk::Sampler> overlayFallbackSampler_;
+    // 1x1x6 cube counterpart, seeding every cube bindless slot (binding 2) for the same reason.
+    std::shared_ptr<vk::DeviceLocalImage> overlayFallbackCubeImage_;
+    std::shared_ptr<vk::Sampler> overlayFallbackCubeSampler_;
 
     std::vector<std::shared_ptr<vk::DeviceLocalImage>> overlayPostColorImages_;
     std::vector<std::shared_ptr<vk::Sampler>> overlayDrawColorImageSamplers_;

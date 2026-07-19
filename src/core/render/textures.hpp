@@ -30,6 +30,13 @@ class Textures : public SharedObject<Textures> {
     void resetFrame();
     uint32_t allocateTexture();
     void initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width, uint32_t height, VkFormat format);
+    // Cube textures (the panorama) live in a separate registry from the 2D textures_ because they are
+    // sampled as samplerCube through the overlay cube bindless binding, not sampler2D. prepareCubeImage
+    // creates a 6-layer cube-compatible image + sampler and binds it into the overlay cube array at its
+    // GL id; uploadCube copies all six stacked faces from the source NativeImage in one shot.
+    void prepareCubeImage(uint32_t id, uint32_t maxLevel, uint32_t faceWidth, uint32_t faceHeight,
+                          VkFormat format);
+    void uploadCube(uint32_t id, uint8_t *src);
     void setSamplingMode(uint32_t id, VkFilter samplingMode, VkSamplerMipmapMode mipmapMode);
     void setAddressMode(uint32_t id, VkSamplerAddressMode addressMode);
     void queueUpload(uint8_t *srcPointer,
@@ -52,6 +59,9 @@ class Textures : public SharedObject<Textures> {
 
     std::map<uint32_t, std::shared_ptr<vk::DeviceLocalImage>> textures_;
     std::map<uint32_t, std::shared_ptr<vk::Sampler>> samplers;
+    // Cube-texture registry, keyed by GL id like textures_/samplers (see prepareCubeImage).
+    std::map<uint32_t, std::shared_ptr<vk::DeviceLocalImage>> cubeTextures_;
+    std::map<uint32_t, std::shared_ptr<vk::Sampler>> cubeSamplers_;
     std::shared_ptr<Emission> emission_;
     // Mod-internal texture ids allocated top-down from the 4096-entry descriptor array (see reset()).
     uint32_t nextID = 4095;

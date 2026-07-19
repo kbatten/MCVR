@@ -232,6 +232,7 @@ std::shared_ptr<vk::DescriptorTable> UIModule::createOverlayDescriptorTable() {
     auto framework = framework_.lock();
 
     ensureOverlayFallbackTexture();
+    ensureOverlayFallbackCubeTexture();
 
     auto descriptorTable = vk::DescriptorTableBuilder{}
         .beginDescriptorLayoutSet()
@@ -246,6 +247,15 @@ std::shared_ptr<vk::DescriptorTable> UIModule::createOverlayDescriptorTable() {
             .binding = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        })
+        // The samplerCube bindless array (the panorama). Same slot count as binding 0 so it can be
+        // indexed by GL id exactly like the sampler2D array; the translated shaders declare it at
+        // set 0, binding 2.
+        .defineDescriptorLayoutSetBinding({
+            .binding = 2,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = OVERLAY_TEXTURE_SLOT_COUNT,
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         })
         .endDescriptorLayoutSetBinding()
@@ -275,6 +285,11 @@ std::shared_ptr<vk::DescriptorTable> UIModule::createOverlayDescriptorTable() {
     // unbound id samples transparent black instead.
     descriptorTable->bindSamplerImageRange(overlayFallbackSampler_, overlayFallbackImage_,
                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 0, 0,
+                                           OVERLAY_TEXTURE_SLOT_COUNT);
+    // Seed the cube array (binding 2) the same way: an unbound cube slot must resolve to a valid cube
+    // descriptor, not uninitialized memory (which faults the GPU on NVIDIA and TDRs the device).
+    descriptorTable->bindSamplerImageRange(overlayFallbackCubeSampler_, overlayFallbackCubeImage_,
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 2, 0,
                                            OVERLAY_TEXTURE_SLOT_COUNT);
 
     return descriptorTable;
@@ -342,11 +357,79 @@ void UIModule::ensureOverlayFallbackTexture() {
     framework->waitDeviceIdle();
 }
 
+void UIModule::ensureOverlayFallbackCubeTexture() {
+    if (overlayFallbackCubeImage_ != nullptr) { return; }
+
+    auto framework = framework_.lock();
+    auto device = framework->device();
+
+    // 1x1, 6 layers, cube-compatible so it gets a VK_IMAGE_VIEW_TYPE_CUBE view and can seed the cube
+    // bindless array. Same role as the 2D fallback: an unbound cube slot samples transparent black.
+    overlayFallbackCubeImage_ = vk::DeviceLocalImage::create(
+        device, framework->vma(), false, 1, 1, 1, 1, 6, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
+#ifdef DEBUG
+        ,
+        "Overlay fallback cube texture"
+#endif
+    );
+    overlayFallbackCubeSampler_ = vk::Sampler::create(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                                      VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+
+    auto mainQueueIndex = framework->physicalDevice()->mainQueueIndex();
+    auto cmdBuffer = vk::CommandBuffer::create(device, framework->mainCommandPool());
+    cmdBuffer->begin();
+
+    // wholeColorSubresourceRange covers all six layers (layerCount = VK_REMAINING_ARRAY_LAYERS).
+    cmdBuffer->barriersBufferImage({}, {{
+                                           .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                           .srcAccessMask = VK_ACCESS_2_NONE,
+                                           .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                           .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                           .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .srcQueueFamilyIndex = mainQueueIndex,
+                                           .dstQueueFamilyIndex = mainQueueIndex,
+                                           .image = overlayFallbackCubeImage_,
+                                           .subresourceRange = vk::wholeColorSubresourceRange,
+                                       }});
+
+    VkClearColorValue clearColor{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}};
+    vkCmdClearColorImage(cmdBuffer->vkCommandBuffer(), overlayFallbackCubeImage_->vkImage(),
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &vk::wholeColorSubresourceRange);
+
+    cmdBuffer->barriersBufferImage({}, {{
+                                           .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                           .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                           .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                           .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                           .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                           .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                           .srcQueueFamilyIndex = mainQueueIndex,
+                                           .dstQueueFamilyIndex = mainQueueIndex,
+                                           .image = overlayFallbackCubeImage_,
+                                           .subresourceRange = vk::wholeColorSubresourceRange,
+                                       }});
+    overlayFallbackCubeImage_->imageLayout() = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    cmdBuffer->end();
+    cmdBuffer->submitMainQueueIndividual(device);
+    framework->waitDeviceIdle();
+}
+
 void UIModule::bindOverlayDescriptorTableResources(std::shared_ptr<vk::DescriptorTable> descriptorTable,
                                                    uint32_t frameIndex) {
     for (auto &[index, binding] : overlayTextureBindings_) {
         descriptorTable->bindSamplerImage(binding.sampler, binding.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
                                           0, index);
+    }
+    // Rebind the cube textures into binding 2 too, so the panorama survives a descriptor-table
+    // recreation on swapchain refresh (mirrors the 2D loop above).
+    for (auto &[index, binding] : overlayCubeTextureBindings_) {
+        descriptorTable->bindSamplerImage(binding.sampler, binding.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
+                                          2, index);
     }
 
     descriptorTable->bindSamplerImage(overlayDrawColorImageSamplers_[frameIndex], overlayDrawColorImages_[frameIndex],
@@ -369,6 +452,22 @@ void UIModule::bindTexture(std::shared_ptr<vk::Sampler> sampler,
     uint32_t size = framework->swapchain()->imageCount();
     for (int i = 0; i < size; i++) {
         overlayDescriptorTables_[i]->bindSamplerImage(sampler, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 0,
+                                                      index);
+    }
+}
+
+void UIModule::bindCubeTexture(std::shared_ptr<vk::Sampler> sampler,
+                               std::shared_ptr<vk::DeviceLocalImage> image,
+                               int index) {
+    auto framework = framework_.lock();
+    overlayCubeTextureBindings_[index] = {
+        .sampler = sampler,
+        .image = image,
+    };
+
+    uint32_t size = framework->swapchain()->imageCount();
+    for (int i = 0; i < size; i++) {
+        overlayDescriptorTables_[i]->bindSamplerImage(sampler, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0, 2,
                                                       index);
     }
 }
