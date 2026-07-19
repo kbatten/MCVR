@@ -719,7 +719,14 @@ UIModuleContext::UIModuleContext(std::shared_ptr<FrameworkContext> context, std:
     overlayDepthBiasSlopeFactor = {0.0, 0.0, 0.0};
     overlayLineWidth = 1.0;
 
-    overlayClearColors = {1.0, 1.0, 1.0, 1.0};
+    // Transparent black, not opaque white. This is the colour the whole overlay attachment is
+    // cleared to (clearOverlayEntireColorAttachment), so an opaque default repaints the entire
+    // screen over everything beneath it. Under 1.21.11 that never showed, because Minecraft's
+    // _clearColor overwrote it before every clear; 26.2 routes clear values through
+    // _clearBuffer instead, and until that was hooked the default was all the backend ever saw --
+    // which is exactly the white screen. Keep the default harmless so a future gap in the clear
+    // path degrades to "nothing painted" rather than "everything erased".
+    overlayClearColors = {0.0, 0.0, 0.0, 0.0};
     overlayClearDepth = 1.0;
     overlayClearStencil = 0xffffffff;
 }
