@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -175,11 +176,16 @@ vk::Shader::Shader(std::shared_ptr<Device> device,
     auto compileResult =
         compileGlslToSpv(std::move(sourcePath), stage, std::move(definitions), std::move(includeDirectories),
                          std::move(injectedSource));
+    // compileGlslToSpv reports a compile failure as empty spirv rather than exiting. Turn that into
+    // an exception so a caller that can carry on (see UIModule::registerOverlayDrawShader) is able
+    // to catch it, while one that cannot still fails loudly instead of building a null module.
+    if (compileResult.spirv.empty()) { throw std::runtime_error("failed to compile shader source " + path_); }
     createModule(compileResult.spirv, compileResult.sourcePath);
 }
 
 vk::Shader::Shader(std::shared_ptr<Device> device, vk::Shader::CompileResult compileResult)
     : device_(device), path_(compileResult.sourcePath) {
+    if (compileResult.spirv.empty()) { throw std::runtime_error("failed to compile shader source " + path_); }
     createModule(compileResult.spirv, compileResult.sourcePath);
 }
 
@@ -455,9 +461,23 @@ vk::Shader::compileGlslToSpv(std::string sourcePath,
     shaderc::SpvCompilationResult result =
         compiler.CompileGlslToSpv(sourceText, shaderKindFromStage(stage), sourcePath.c_str(), options);
     if (result.GetCompilationStatus() != shaderc_compilation_status_success) {
+        // Report failure instead of killing the process. These sources are translated from
+        // Minecraft's own GLSL at runtime, so one construct the translator does not handle yet is a
+        // routine, expected outcome mid-migration -- and exiting here took the whole game down with
+        // no Java stack trace, making an ordinary translation gap look like a hard crash. An empty
+        // spirv means "did not compile"; callers decide whether that is fatal.
         shaderCerr() << "failed to compile shader source " << sourcePath << "\n"
                      << result.GetErrorMessage() << std::endl;
-        exit(EXIT_FAILURE);
+        return {
+            .sourcePath = std::move(sourcePath),
+            .stage = stage,
+            .spirv = {},
+#ifdef DEBUG
+            .cacheHit = false,
+            .cacheReadFailed = cacheReadFailed,
+            .cacheFilePath = std::move(cacheFilePath),
+#endif
+        };
     }
 
     std::vector<uint32_t> spirv(result.cbegin(), result.cend());

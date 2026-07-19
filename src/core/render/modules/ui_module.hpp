@@ -6,6 +6,7 @@
 #include "core/vulkan/all_core_vulkan.hpp"
 
 #include <array>
+#include <cstdint>
 #include <map>
 #include <unordered_map>
 
@@ -62,6 +63,12 @@ class UIModule : public SharedObject<UIModule> {
     // index directly into it, so every slot must hold a valid descriptor -- see
     // ensureOverlayFallbackTexture().
     static constexpr uint32_t OVERLAY_TEXTURE_SLOT_COUNT = 4096;
+
+    // Returned by registerOverlayDrawShader when the shader could not be built (e.g. its translated
+    // GLSL uses something the translator does not handle yet). Chosen so that the JNI cast to jint
+    // yields -1, the failure value that entry point already uses. Never a valid index into
+    // overlayDynamicDrawShaders_ -- callers must not draw with it.
+    static constexpr uint32_t OVERLAY_SHADER_UNAVAILABLE = UINT32_MAX;
 
     UIModule();
     ~UIModule();

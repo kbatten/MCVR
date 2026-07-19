@@ -7,8 +7,16 @@
 #include "core/render/world.hpp"
 
 #include <fstream>
+#include <iostream>
+#include <ostream>
 #include <regex>
 #include <stdexcept>
+
+namespace {
+std::ostream &uiCerr() {
+    return std::cerr << "[UI] ";
+}
+} // namespace
 
 UIModule::UIModule() {}
 
@@ -176,23 +184,39 @@ uint32_t UIModule::registerOverlayDrawShader(const std::string &key,
     info.vertexShaderPath = vertexShaderPath;
     info.fragmentShaderPath = fragmentShaderPath;
     info.definitions = definitions;
-    info.topology = overlayTopologyForDrawMode(drawMode);
-    info.shaders.vertexShader = vk::Shader::create(
-        framework->device(), vertexShaderPath, VK_SHADER_STAGE_VERTEX_BIT, definitions);
-    info.shaders.fragmentShader = vk::Shader::create(
-        framework->device(), fragmentShaderPath, VK_SHADER_STAGE_FRAGMENT_BIT, definitions);
 
-    vk::DynamicGraphicsPipelineBuilder builder{1};
-    vk::VertexLayoutInfo vertexLayout = makeOverlayVertexLayout(vertexFormatType, vertexShaderPath);
-    builder.defineRenderPass(overlayDrawRenderPass_, 0)
-        .beginShaderStage()
-        .defineShaderStage(info.shaders.vertexShader, VK_SHADER_STAGE_VERTEX_BIT)
-        .defineShaderStage(info.shaders.fragmentShader, VK_SHADER_STAGE_FRAGMENT_BIT)
-        .endShaderStage();
-    builder.defineVertexInputState(vertexLayout);
-    info.pipeline =
-        builder.defineInputAssemblyState(info.topology).definePipelineLayout(overlayDescriptorTables_[0]).build(
-            framework->device());
+    // Everything from here on can throw, and none of it may be allowed to: the shader sources are
+    // translated from Minecraft's GLSL at runtime, so a construct the translator does not handle
+    // yet is a routine mid-migration outcome, and an unsupported draw mode or vertex format throws
+    // outright. Report the shader as unavailable instead and let the caller fall back to
+    // Minecraft's own GL draw for it. Catching here rather than letting it escape also matters
+    // because this runs under JNI, where an exception crossing the boundary is undefined behaviour.
+    try {
+        info.topology = overlayTopologyForDrawMode(drawMode);
+        info.shaders.vertexShader = vk::Shader::create(
+            framework->device(), vertexShaderPath, VK_SHADER_STAGE_VERTEX_BIT, definitions);
+        info.shaders.fragmentShader = vk::Shader::create(
+            framework->device(), fragmentShaderPath, VK_SHADER_STAGE_FRAGMENT_BIT, definitions);
+
+        vk::DynamicGraphicsPipelineBuilder builder{1};
+        vk::VertexLayoutInfo vertexLayout = makeOverlayVertexLayout(vertexFormatType, vertexShaderPath);
+        builder.defineRenderPass(overlayDrawRenderPass_, 0)
+            .beginShaderStage()
+            .defineShaderStage(info.shaders.vertexShader, VK_SHADER_STAGE_VERTEX_BIT)
+            .defineShaderStage(info.shaders.fragmentShader, VK_SHADER_STAGE_FRAGMENT_BIT)
+            .endShaderStage();
+        builder.defineVertexInputState(vertexLayout);
+        info.pipeline =
+            builder.defineInputAssemblyState(info.topology).definePipelineLayout(overlayDescriptorTables_[0]).build(
+                framework->device());
+    } catch (const std::exception &error) {
+        // Cache the failure so a shader that cannot be built is not retranslated and recompiled on
+        // every frame that draws with it.
+        uiCerr() << "overlay shader unavailable for " << key << ": " << error.what()
+                 << " (falling back to Minecraft's GL draw for it)" << std::endl;
+        overlayDynamicDrawShaderIds_[key] = OVERLAY_SHADER_UNAVAILABLE;
+        return OVERLAY_SHADER_UNAVAILABLE;
+    }
 
     uint32_t shaderId = overlayDynamicDrawShaders_.size();
     overlayDynamicDrawShaderIds_[key] = shaderId;

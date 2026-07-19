@@ -57,6 +57,9 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_ShaderProxy_draw(
     jint uniformSize) {
     auto framework = Renderer::instance().framework();
     if (framework == nullptr) return;
+    // registerShader returns -1 for a shader it could not build; drawing with that would index the
+    // shader table out of range. The Java side already skips these draws -- this is the backstop.
+    if (shaderId < 0) return;
     auto vertexBuffer = Renderer::instance().buffers()->getBuffer(vertexId);
     auto indexBuffer = Renderer::instance().buffers()->getBuffer(indexId);
     uint32_t uniformOffset = 0;
