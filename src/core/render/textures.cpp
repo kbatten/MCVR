@@ -275,8 +275,12 @@ void Textures::queueUpload(uint8_t *srcPointer,
     auto vma = Renderer::instance().framework()->vma();
     auto dstTextureIter = textures_.find(dstId);
     if (dstTextureIter == textures_.end()) {
-        texturesCerr() << "The dstID " << dstId << " is not registered yet!" << std::endl;
-        exit(EXIT_FAILURE);
+        // An id the 2D texture registry never received: a recycled/un-imported id, or a write route
+        // aimed at a texture the backend tracks elsewhere -- e.g. the panorama cube, which lives in the
+        // samplerCube registry, not textures_. Nothing here can service it. Drop it loudly rather than
+        // abort the whole process, matching the out-of-bounds skip below.
+        texturesCerr() << "SKIP upload to unregistered dstId=" << dstId << std::endl;
+        return;
     }
     auto dstTexture = (*dstTextureIter).second;
 
