@@ -444,6 +444,16 @@ void UIModule::bindTexture(std::shared_ptr<vk::Sampler> sampler,
                            std::shared_ptr<vk::DeviceLocalImage> image,
                            int index) {
     auto framework = framework_.lock();
+    // Diagnostic: log the first time each overlay bindless slot (GL id) receives a real 2D image, with
+    // its dimensions. Confirms whether the glIds a replayed draw samples (e.g. the GUI sprite atlas that
+    // gui_textured binds as Sampler0) actually hold their texture vs still showing the transparent
+    // fallback -> alpha 0 -> discard. Temporary; strip with the rest of the radiance_*.log scaffolding.
+    if (overlayTextureBindings_.find(index) == overlayTextureBindings_.end()) {
+        uiCerr() << "[OverlayBind] slot=" << index << " image="
+                 << (image ? std::to_string(image->width()) + "x" + std::to_string(image->height())
+                           : std::string("null"))
+                 << std::endl;
+    }
     overlayTextureBindings_[index] = {
         .sampler = sampler,
         .image = image,
