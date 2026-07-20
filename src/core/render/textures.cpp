@@ -216,8 +216,10 @@ void Textures::setSamplingMode(uint32_t id, VkFilter samplingMode, VkSamplerMipm
 
     auto samplerIter = samplers.find(id);
     if (samplerIter == samplers.end()) {
-        texturesCerr() << "The given texture id: " << id << " is not allocated for sampler" << std::endl;
-        exit(EXIT_FAILURE);
+        // No 2D sampler was allocated for this id -- e.g. a cube (panorama) glId that owns its sampler
+        // in the cube registry, or a recycled id. Skip loudly rather than abort the whole process.
+        texturesCerr() << "SKIP setSamplingMode: id " << id << " has no 2D sampler" << std::endl;
+        return;
     }
     if (samplers[id]->vkSamplingMode() != samplingMode) {
         VkSamplerAddressMode addressMode = samplers[id]->vkAddressMode();
@@ -237,8 +239,9 @@ void Textures::setAddressMode(uint32_t id, VkSamplerAddressMode addressMode) {
 
     auto samplerIter = samplers.find(id);
     if (samplerIter == samplers.end()) {
-        texturesCerr() << "The given texture id: " << id << " is not allocated for sampler" << std::endl;
-        exit(EXIT_FAILURE);
+        // As setSamplingMode: no 2D sampler for this id (cube glId or recycled id). Skip, don't abort.
+        texturesCerr() << "SKIP setAddressMode: id " << id << " has no 2D sampler" << std::endl;
+        return;
     }
     if (samplers[id]->vkAddressMode() != addressMode) {
         VkFilter samplingMode = samplers[id]->vkSamplingMode();
