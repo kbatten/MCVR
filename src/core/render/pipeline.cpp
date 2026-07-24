@@ -17,6 +17,7 @@
 
 #include <cstdlib>
 #include <iomanip>
+#include <iostream>
 #include <set>
 
 WorldPipelineBlueprint::WorldPipelineBlueprint(WorldPipelineBuildParams *params) {
@@ -231,6 +232,14 @@ void WorldPipelineContext::render() {
                                                         .subresourceRange = vk::wholeColorSubresourceRange,
                                                     }});
         outputImage->imageLayout() = targetLayout;
+    }
+
+    // TEMP diagnostic (world renders black): if the module graph is empty, nothing writes outputImage and
+    // the composited world is black. One-time so it does not flood the native log.
+    static bool loggedModuleCount = false;
+    if (!loggedModuleCount) {
+        loggedModuleCount = true;
+        std::cerr << "[World] render(): worldModuleContexts=" << worldModuleContexts.size() << std::endl;
     }
 
     for (int i = 0; i < worldModuleContexts.size(); i++) { worldModuleContexts[i]->render(); }

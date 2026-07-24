@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
+#include <iostream>
 
 WorldPrepare::WorldPrepare() {}
 
@@ -368,6 +369,22 @@ void WorldPrepareContext::render() {
             blasGroupAccu += chunk1->geometryCount + 1;
 
             blasIndex++;
+        }
+    }
+
+    // TEMP diagnostic: the world renders black in-game. If no chunk has a built BLAS, the TLAS is empty
+    // and the RT prepare bails below (tlas=null) -> nothing is ray-traced -> black. Throttled so it does
+    // not flood the native log; shows whether chunk geometry is reaching the acceleration structure.
+    {
+        static int prepLog = 0;
+        if ((prepLog++ % 120) == 0) {
+            auto &cs = chunks->chunks();
+            int withBlas = 0;
+            for (auto &c : cs) {
+                if (c != nullptr && c->blas != nullptr) { withBlas++; }
+            }
+            std::cerr << "[World] TLAS prepare: instances=" << blasIndex << " chunksWithBLAS=" << withBlas << "/"
+                      << cs.size() << (instanceBuilder.instances.empty() ? " -> TLAS EMPTY (null)" : "") << std::endl;
         }
     }
 
