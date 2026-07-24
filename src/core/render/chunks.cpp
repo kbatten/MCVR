@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 
@@ -1380,6 +1381,16 @@ void Chunks::resetFrame() {
 
 void Chunks::invalidateChunk(int id) {
     std::unique_lock<std::recursive_mutex> lock(mutex_);
+    if (id < 0 || static_cast<size_t>(id) >= chunks_.size()) {
+        // Same transient out-of-range window as relocateChunk during a render-distance increase.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::cerr << "[Chunks] SKIP invalidateChunk: id " << id << " out of range (size=" << chunks_.size()
+                      << ")" << std::endl;
+        }
+        return;
+    }
     auto framework = Renderer::instance().framework();
     auto &frr = framework->frameResourceRetainer();
 
@@ -1395,6 +1406,20 @@ void Chunks::invalidateChunk(int id) {
 
 void Chunks::relocateChunk(int id, int x, int y, int z) {
     std::unique_lock<std::recursive_mutex> lock(mutex_);
+    if (id < 0 || static_cast<size_t>(id) >= chunks_.size()) {
+        // A ViewArea rebuilt for a larger render distance relocates its sections during construction,
+        // before ChunkProxy.init (its <init> TAIL) calls reset() to grow these arrays -- so on a
+        // render-distance increase id can momentarily exceed the current size. Skip rather than index
+        // out of bounds; reset() recreates every chunk and the section is repositioned afterward, the
+        // same path first world load already takes (its construction-time relocates are skipped too).
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            std::cerr << "[Chunks] SKIP relocateChunk: id " << id << " out of range (size=" << chunks_.size()
+                      << ")" << std::endl;
+        }
+        return;
+    }
     auto framework = Renderer::instance().framework();
     auto &frr = framework->frameResourceRetainer();
 
