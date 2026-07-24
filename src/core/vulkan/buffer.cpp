@@ -397,6 +397,19 @@ void vk::DeviceLocalBuffer::uploadToBuffer(VkCommandBuffer cmdBuffer) {
 }
 
 void vk::DeviceLocalBuffer::uploadToBuffer(VkCommandBuffer cmdBuffer, size_t size, size_t srcOffset, size_t dstOffset) {
+    if (stagingBuffer_ == VK_NULL_HANDLE) {
+        // Nothing to copy: a non-persist buffer's staging is freed after its first upload, or it was
+        // never staged. Issuing the copy anyway passes VK_NULL_HANDLE as srcBuffer to vkCmdCopyBuffer,
+        // which validation flags (VUID-vkCmdCopyBuffer-srcBuffer-parameter) and the driver faults on.
+        // Callers should not re-upload an already-uploaded buffer (see Buffers::performQueuedUpload);
+        // skip loudly here as a backstop rather than crash the device.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            bufferCerr() << "SKIP uploadToBuffer: staging is VK_NULL_HANDLE (nothing to copy)" << std::endl;
+        }
+        return;
+    }
     VkBufferCopy copyRegion = {srcOffset, dstOffset, size};
     vkCmdCopyBuffer(cmdBuffer, stagingBuffer_, buffer_, 1, &copyRegion);
 }

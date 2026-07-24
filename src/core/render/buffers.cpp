@@ -244,6 +244,14 @@ void Buffers::performQueuedUpload() {
     }
 
     for (auto buffer : *importantIndexVertexBuffer_) {
+        // Skip buffers already uploaded this frame. performQueuedUpload runs once per replayed GUI
+        // drawIndexed (RenderPassMixins), so it re-sweeps this queue many times per frame. The chunk/
+        // entity mesh buffers are non-persist: their staging is freed and nulled after the first
+        // uploadToBuffer, so a second copy would pass VK_NULL_HANDLE as srcBuffer to vkCmdCopyBuffer and
+        // fault the device. A null staging handle means "already uploaded" (or never staged) -- there is
+        // nothing to barrier or copy. (Buffers queued later in the frame still hold valid staging and
+        // upload on the next sweep, so each is copied exactly once.)
+        if (buffer == nullptr || buffer->vkStagingBuffer() == VK_NULL_HANDLE) { continue; }
         uploadPreBufferBarriers.push_back({
             .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
             .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
@@ -274,7 +282,12 @@ void Buffers::performQueuedUpload() {
         if (size > 0) { buffer->uploadToBuffer(cmdBuffer, size, 0, 0); }
     }
 
-    for (auto buffer : *importantIndexVertexBuffer_) { buffer->uploadToBuffer(cmdBuffer); }
+    for (auto buffer : *importantIndexVertexBuffer_) {
+        // Same skip as the barrier loop above: a non-persist buffer whose staging is already freed was
+        // uploaded on an earlier sweep this frame; re-copying it passes a null srcBuffer to the driver.
+        if (buffer == nullptr || buffer->vkStagingBuffer() == VK_NULL_HANDLE) { continue; }
+        buffer->uploadToBuffer(cmdBuffer);
+    }
 
     cmdBuffer->barriersBufferImage(uploadPostBufferBarriers, {});
 }
