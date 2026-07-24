@@ -14,6 +14,16 @@
 #include <limits>
 #include <stdexcept>
 
+// TEMP diagnostic (world renders black: chunksWithBLAS=0). Chunk1::enqueue applies a built BLAS only when
+// chunkBuildData->version > blasVersion; these count how often it applies vs discards, and how often
+// invalidate() nulls a chunk's BLAS. All chunk version ops run under Chunks::mutex_, so plain counters are
+// safe. Strip with the rest of the [World]/[Chunks] scaffolding.
+namespace {
+long long g_enqApplied = 0;
+long long g_enqDiscarded = 0;
+long long g_chunkInvalidated = 0;
+}  // namespace
+
 struct LightData {
     glm::vec4 p0Area;
     glm::vec4 p1;
@@ -1082,6 +1092,7 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
     lastUpdate = std::chrono::steady_clock::now();
 
     if (chunkBuildData->version > blasVersion) {
+        g_enqApplied++;
         blasVersion = chunkBuildData->version;
         x = chunkBuildData->x;
         y = chunkBuildData->y;
@@ -1089,6 +1100,13 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
 
         frr.retain(blas);
         blas = chunkBuildData->blas;
+        if (chunkBuildData->blas == nullptr) {
+            static long long nullBlasThrottle = 0;
+            if ((nullBlasThrottle++ % 500) == 0) {
+                std::cerr << "[Chunks] enqueue applied but chunkBuildData->blas is NULL (geometryCount="
+                          << chunkBuildData->geometryCount << ")" << std::endl;
+            }
+        }
 
         frr.retain(indexBufferAddresses);
         indexBufferAddresses =
@@ -1124,6 +1142,13 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
         geometryGroupNames = std::make_shared<std::vector<std::string>>(std::move(chunkBuildData->geometryGroupNames));
         return true;
     } else {
+        g_enqDiscarded++;
+        static long long discardThrottle = 0;
+        if ((discardThrottle++ % 500) == 0) {
+            std::cerr << "[Chunks] enqueue: version=" << chunkBuildData->version << " <= blasVersion=" << blasVersion
+                      << " -> DISCARD (applied=" << g_enqApplied << " discarded=" << g_enqDiscarded
+                      << " invalidated=" << g_chunkInvalidated << ")" << std::endl;
+        }
         frr.retain(chunkBuildData->blas);
         frr.retain(chunkBuildData->indexBuffer);
         frr.retain(chunkBuildData->positionBuffer);
@@ -1139,6 +1164,7 @@ void Chunk1::invalidate() {
 
     lastUpdate = std::chrono::steady_clock::now();
 
+    g_chunkInvalidated++;
     blasVersion = latestVersion++;
 
     frr.retain(blas);
