@@ -17,12 +17,12 @@
 // TEMP diagnostic (world renders black: chunksWithBLAS=0). Chunk1::enqueue applies a built BLAS only when
 // chunkBuildData->version > blasVersion; these count how often it applies vs discards, and how often
 // invalidate() nulls a chunk's BLAS. All chunk version ops run under Chunks::mutex_, so plain counters are
-// safe. Strip with the rest of the [World]/[Chunks] scaffolding.
-namespace {
+// safe. Strip with the rest of the [World]/[Chunks] scaffolding. External linkage so world_prepare.cpp can
+// print them from its always-running probe (the discard-only log below never fired, so the counts must be
+// surfaced unconditionally to tell "enqueue never called" from "applies then gets nulled").
 long long g_enqApplied = 0;
 long long g_enqDiscarded = 0;
 long long g_chunkInvalidated = 0;
-}  // namespace
 
 struct LightData {
     glm::vec4 p0Area;

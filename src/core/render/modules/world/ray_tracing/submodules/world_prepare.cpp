@@ -376,6 +376,11 @@ void WorldPrepareContext::render() {
     // and the RT prepare bails below (tlas=null) -> nothing is ray-traced -> black. Throttled so it does
     // not flood the native log; shows whether chunk geometry is reaching the acceleration structure.
     {
+        // g_* counters live in chunks.cpp (Chunk1::enqueue / invalidate). Surfaced here because this probe
+        // always runs, unlike the discard-only log in enqueue.
+        extern long long g_enqApplied;
+        extern long long g_enqDiscarded;
+        extern long long g_chunkInvalidated;
         static int prepLog = 0;
         if ((prepLog++ % 120) == 0) {
             auto &cs = chunks->chunks();
@@ -384,7 +389,9 @@ void WorldPrepareContext::render() {
                 if (c != nullptr && c->blas != nullptr) { withBlas++; }
             }
             std::cerr << "[World] TLAS prepare: instances=" << blasIndex << " chunksWithBLAS=" << withBlas << "/"
-                      << cs.size() << (instanceBuilder.instances.empty() ? " -> TLAS EMPTY (null)" : "") << std::endl;
+                      << cs.size() << (instanceBuilder.instances.empty() ? " -> TLAS EMPTY (null)" : "")
+                      << " | enqApplied=" << g_enqApplied << " enqDiscarded=" << g_enqDiscarded
+                      << " invalidated=" << g_chunkInvalidated << std::endl;
         }
     }
 
