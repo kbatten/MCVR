@@ -1348,7 +1348,16 @@ void RayTracingModule::renderRayTracingPass(
     auto worldCommandBuffer = frameworkContext->worldCommandBuffer;
     uint32_t frameIndex = frameworkContext->frameIndex;
 
-    if (context.worldPrepareContext->tlas == nullptr) { return; }
+    if (context.worldPrepareContext->tlas == nullptr) {
+        // TEMP diagnostic (world renders black even with a full TLAS): confirm whether the trace pass
+        // is being skipped because the TLAS is null at dispatch time. One-time so it does not flood.
+        static bool warnedNullTlas = false;
+        if (!warnedNullTlas) {
+            warnedNullTlas = true;
+            std::cerr << "[RT] SKIP trace pass=" << pass.config.name << ": tlas==null at dispatch" << std::endl;
+        }
+        return;
+    }
 
     context.worldPrepareContext->setupHitGroupSbt(
         pass.hitGroupNameToIndex, pass.fallbackHitGroupIndex, pass.shadowHitGroupIndex, worldCommandBuffer,
@@ -1384,6 +1393,15 @@ void RayTracingModule::renderRayTracingPass(
             .dstStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
             .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
         }});
+    }
+
+    // TEMP diagnostic (world renders black even with a full TLAS): confirm the trace actually
+    // dispatches and at what resolution. One-time per pass name so it does not flood; degenerate dims
+    // (0/1) or a pass that never appears here point straight at the empty output.
+    static std::set<std::string> loggedTraceDispatch;
+    if (loggedTraceDispatch.insert(pass.config.name).second) {
+        std::cerr << "[RT] trace dispatch pass=" << pass.config.name << " " << traceWidth << "x" << traceHeight
+                  << "x" << traceDepth << std::endl;
     }
 
     worldCommandBuffer->bindDescriptorTable(context.rayTracingDescriptorTable, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
