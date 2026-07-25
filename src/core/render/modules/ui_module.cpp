@@ -1589,11 +1589,20 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
     extern long long g_overlaySeq;
     if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
         g_overlaySeq++;
-        // Report the depth state each HUD draw runs with: if depthTest=1 the stale-depth theory holds and
-        // the one-shot depth reset should bring the HUD back; if depthTest=0 the HUD is discarded for some
-        // other reason (pivot to composite-at-present).
-        std::cerr << "[Seq] hud-drawIndexed shader=" << shaderId << " depthTest=" << overlayDepthTestEnable
-                  << " depthWrite=" << overlayDepthWriteEnable << " compareOp=" << overlayDepthCompareOp
+        // depthTest=0 (proven) rules out stale-depth discard. Localize the real cause in one run by logging
+        // where this HUD draw goes and the state that could kill its fragments:
+        //   img=  -> compare to [FuseDbg] fuseWorld/present handle; mismatch = frame/context mismatch (HUD
+        //            lands in an image nobody presents).
+        //   scis= -> a zero/offset scissor clips the HUD out; enabled flag + rect.
+        //   view= -> a zero/wrong viewport.
+        //   blend/mask -> blend or a zeroed color-write-mask nulls the output over the opaque world.
+        std::cerr << "[Seq] hud-drawIndexed shader=" << shaderId << std::hex << " img=0x"
+                  << (uint64_t) overlayDrawColorImage->vkImage() << std::dec << " scis=" << overlayScissorEnabled
+                  << "(" << overlayScissor.offset.x << "," << overlayScissor.offset.y << " "
+                  << overlayScissor.extent.width << "x" << overlayScissor.extent.height << ")"
+                  << " view=(" << (int) overlayViewport.x << "," << (int) overlayViewport.y << " "
+                  << (int) overlayViewport.width << "x" << (int) overlayViewport.height << ")"
+                  << " blend=" << overlayBlendEnabled << " mask=0x" << std::hex << overlayColorWriteMask << std::dec
                   << std::endl;
     }
 
