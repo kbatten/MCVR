@@ -1393,6 +1393,18 @@ void UIModuleContext::switchOverlayDraw() {
 #endif
         overlayDrawDepthStencilImage->imageLayout() = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL;
 
+        // Sync fix (26.2 black world): this render pass uses LOAD_OP_LOAD, which reads the color attachment
+        // at the COLOR_ATTACHMENT_OUTPUT stage. The barriers preceding this only cover FRAGMENT_SHADER/
+        // TRANSFER, so fuseWorld's world blit (a TRANSFER write into overlayDrawColorImage) was NOT
+        // synchronized with the load -- the loaded background came through as undefined (black) while UI
+        // drawn inside the pass showed fine. Make all prior writes visible to the color-attachment load.
+        context->overlayCommandBuffer->barriersMemory({{
+            .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+        }});
+
         context->overlayCommandBuffer->beginRenderPass({
             .renderPass = module->overlayDrawRenderPass_,
             .framebuffer = overlayDrawFramebuffer,
@@ -1493,12 +1505,15 @@ void UIModuleContext::clearOverlayEntireColorAttachment() {
 
     switchOverlayDraw();
 
-    // TEMP experiment: if the full-image overlay clear is what erases the fuseWorld world blit (it runs
-    // after fuseWorld each frame), suppressing it should let the world show. Keep switchOverlayDraw() above
-    // so the render-pass/overlayMode state stays consistent; only skip the wipe. Gated by an env var. In a
-    // world fuseWorld overwrites the whole overlay each frame, so skipping this clear should not smear;
-    // menus (no fuseWorld) still rely on it, so this is a diagnostic, not the final fix.
-    if (std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") != nullptr) { return; }
+    // 26.2 black world (fix): MC routes its per-frame color clear here (GlStateManager _clear/_clearBuffer
+    // -> DrawCommandProxy.Overlay.glClear). In a world, fuseWorld blits the whole world over the overlay
+    // every frame, so that blit -- not this clear -- is the per-frame reset; letting this full-image clear
+    // run would wipe the composited world (leaving black behind the HUD). Skip the color clear whenever a
+    // world is being composited; menus (no fuseWorld) still rely on it. switchOverlayDraw() above already
+    // ran so overlayMode/render-pass state stays consistent. Env var forces the skip for diagnostics.
+    if (std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") != nullptr || Renderer::instance().world()->shouldRender()) {
+        return;
+    }
 
     VkClearAttachment clearAttachment{};
     clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
