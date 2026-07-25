@@ -2,6 +2,7 @@
 
 #include "core/render/render_framework.hpp"
 #include "core/render/renderer.hpp"
+#include "core/render/world.hpp"
 
 #include "core/render/modules/ui_module.hpp"
 #include "core/render/modules/world/dlss/dlss_module.hpp"
