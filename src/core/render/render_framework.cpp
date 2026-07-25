@@ -10,6 +10,7 @@
 #include "core/render/textures.hpp"
 #include "core/render/world.hpp"
 
+#include <cstdlib>
 #include <iostream>
 #include <random>
 #include <thread>
@@ -153,6 +154,88 @@ void FrameworkContext::fuseFinal() {
     pipelineContext->uiModuleContext->overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 #endif
     swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    // TEMP diagnostic (world stays black even with the overlay clear off + a magenta blit source): present
+    // the raw world outputImage STRAIGHT to the swapchain, bypassing the whole fuseWorld->overlay->present
+    // path. This isolates the two remaining possibilities. World/terrain (or magenta, if CLEAR_OUTPUT is
+    // also set) appears -> outputImage has content and the overlay compositing is the bug. Still black ->
+    // outputImage itself is black (the RT output, despite the trace dispatching). Overwrites the swapchain
+    // the overlay blit just wrote. Gated by env var.
+    if (std::getenv("RADIANCE_DEBUG_PRESENT_WORLD") != nullptr && pipelineContext->worldPipelineContext != nullptr &&
+        pipelineContext->worldPipelineContext->outputImage != nullptr) {
+        auto worldImg = pipelineContext->worldPipelineContext->outputImage;
+        fuseCommandBuffer->barriersBufferImage(
+            {}, {
+                    {
+                        .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                        .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                        .oldLayout = worldImg->imageLayout(),
+                        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        .srcQueueFamilyIndex = mainQueueIndex,
+                        .dstQueueFamilyIndex = mainQueueIndex,
+                        .image = worldImg,
+                        .subresourceRange = vk::wholeColorSubresourceRange,
+                    },
+                    {
+                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        .srcQueueFamilyIndex = mainQueueIndex,
+                        .dstQueueFamilyIndex = mainQueueIndex,
+                        .image = swapchainImage,
+                        .subresourceRange = vk::wholeColorSubresourceRange,
+                    },
+                });
+        worldImg->imageLayout() = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+        VkImageBlit worldBlit{};
+        worldBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        worldBlit.srcSubresource.layerCount = 1;
+        worldBlit.srcOffsets[1] = {static_cast<int>(worldImg->width()), static_cast<int>(worldImg->height()), 1};
+        worldBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        worldBlit.dstSubresource.layerCount = 1;
+        worldBlit.dstOffsets[1] = {static_cast<int>(swapchainImage->width()),
+                                   static_cast<int>(swapchainImage->height()), 1};
+        vkCmdBlitImage(fuseCommandBuffer->vkCommandBuffer(), worldImg->vkImage(),
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchainImage->vkImage(),
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &worldBlit, VK_FILTER_LINEAR);
+
+        fuseCommandBuffer->barriersBufferImage(
+            {}, {
+                    {
+                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                        .srcQueueFamilyIndex = mainQueueIndex,
+                        .dstQueueFamilyIndex = mainQueueIndex,
+                        .image = worldImg,
+                        .subresourceRange = vk::wholeColorSubresourceRange,
+                    },
+                    {
+                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                        .srcQueueFamilyIndex = mainQueueIndex,
+                        .dstQueueFamilyIndex = mainQueueIndex,
+                        .image = swapchainImage,
+                        .subresourceRange = vk::wholeColorSubresourceRange,
+                    },
+                });
+        worldImg->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
 }
 
 Framework::Framework() {}
