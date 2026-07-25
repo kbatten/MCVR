@@ -244,31 +244,6 @@ void WorldPipelineContext::render() {
 
     for (int i = 0; i < worldModuleContexts.size(); i++) { worldModuleContexts[i]->render(); }
 
-    // TEMP diagnostic (world renders pure black even with a full TLAS + a dispatching trace): overwrite
-    // the world outputImage with solid magenta AFTER the module chain, so this tests only the
-    // outputImage -> fuseWorld blit -> overlay composite -> screen path. Gated by an env var so it needs
-    // no revert and does not disturb normal runs. If the world shows MAGENTA with this set, the compositing
-    // path works and the black is the RT output itself (rays/shading) -> RenderDoc/shading next. If it is
-    // STILL black with this set, the outputImage never reaches the screen -> the fuse/composite is the bug.
-    if (std::getenv("RADIANCE_DEBUG_CLEAR_OUTPUT") != nullptr && outputImage != nullptr) {
-        worldCommandBuffer->barriersBufferImage({}, {{
-                                                        .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                                                        .srcAccessMask = 0,
-                                                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                                        .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                        .oldLayout = outputImage->imageLayout(),
-                                                        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-                                                        .srcQueueFamilyIndex = mainQueueIndex,
-                                                        .dstQueueFamilyIndex = mainQueueIndex,
-                                                        .image = outputImage,
-                                                        .subresourceRange = vk::wholeColorSubresourceRange,
-                                                    }});
-        outputImage->imageLayout() = VK_IMAGE_LAYOUT_GENERAL;
-        const VkClearColorValue magenta{.float32 = {1.0f, 0.0f, 1.0f, 1.0f}};
-        vkCmdClearColorImage(worldCommandBuffer->vkCommandBuffer(), outputImage->vkImage(),
-                             VK_IMAGE_LAYOUT_GENERAL, &magenta, 1, &vk::wholeColorSubresourceRange);
-    }
-
     worldCommandBuffer->barriersBufferImage(
         {}, {{
                 .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT |
@@ -579,6 +554,43 @@ void PipelineContext::fuseWorld() {
             });
 
     uiModuleContext->overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+    // TEMP diagnostic (world renders pure black even with a full TLAS + a dispatching trace): when
+    // RADIANCE_DEBUG_CLEAR_OUTPUT is set, overwrite the EXACT blit source with solid magenta immediately
+    // before the blit, in the blit's own command buffer. This removes all render()/fuseWorld ordering and
+    // frame-buffering ambiguity: it tests only the blit -> overlay composite -> present path. Magenta on
+    // screen -> that path works and the black is that the RT output never lands in this outputImage (a
+    // render()/fuseWorld ordering / frame-index / instance mismatch). Still black -> the world image never
+    // reaches the screen at all (blit / present / overlay-composite bug). outputImage is TRANSFER_SRC here.
+    if (std::getenv("RADIANCE_DEBUG_CLEAR_OUTPUT") != nullptr) {
+        overlayCommandBuffer->barriersBufferImage({}, {{
+                                                          .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                          .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                          .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                          .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                                          .srcQueueFamilyIndex = mainQueueIndex,
+                                                          .dstQueueFamilyIndex = mainQueueIndex,
+                                                          .image = worldPipelineContext->outputImage,
+                                                          .subresourceRange = vk::wholeColorSubresourceRange,
+                                                      }});
+        const VkClearColorValue magenta{.float32 = {1.0f, 0.0f, 1.0f, 1.0f}};
+        vkCmdClearColorImage(overlayCommandBuffer->vkCommandBuffer(), worldPipelineContext->outputImage->vkImage(),
+                             VK_IMAGE_LAYOUT_GENERAL, &magenta, 1, &vk::wholeColorSubresourceRange);
+        overlayCommandBuffer->barriersBufferImage({}, {{
+                                                          .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                          .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                          .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+                                                          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                          .srcQueueFamilyIndex = mainQueueIndex,
+                                                          .dstQueueFamilyIndex = mainQueueIndex,
+                                                          .image = worldPipelineContext->outputImage,
+                                                          .subresourceRange = vk::wholeColorSubresourceRange,
+                                                      }});
+    }
 
     // TODO: add to command buffer
     VkImageBlit imageBlit{};
