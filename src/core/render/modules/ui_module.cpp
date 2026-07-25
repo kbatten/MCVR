@@ -1415,6 +1415,26 @@ void UIModuleContext::switchOverlayDraw() {
         overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         overlayDrawDepthStencilImage->imageLayout() = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         syncToCommandBuffer();
+
+        // 26.2 in-world HUD fix: fuseWorld set overlayDepthPendingClear because it composited a world this
+        // frame while the cancelled LevelRenderer.render left the shared overlay depth buffer un-cleared.
+        // The depth attachment is LOAD_OP_LOAD, so without this the depth-tested HUD tests against stale
+        // depth and is discarded. Reset depth (to the far plane) once here, at the first overlay pass begin,
+        // before any HUD draw. One-shot: cleared so repeated DRAW<->POST toggles within the frame keep the
+        // HUD's own inter-layer depth intact.
+        if (overlayDepthPendingClear) {
+            overlayDepthPendingClear = false;
+            VkClearAttachment depthClear{};
+            depthClear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            depthClear.clearValue.depthStencil.depth = 1.0f;
+            depthClear.clearValue.depthStencil.stencil = 0;
+            VkClearRect depthRect{};
+            depthRect.rect.offset = {0, 0};
+            depthRect.rect.extent = framework->swapchain()->vkExtent();
+            depthRect.baseArrayLayer = 0;
+            depthRect.layerCount = 1;
+            vkCmdClearAttachments(context->overlayCommandBuffer->vkCommandBuffer(), 1, &depthClear, 1, &depthRect);
+        }
     }
 
     overlayMode = DRAW;
@@ -1569,7 +1589,12 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
     extern long long g_overlaySeq;
     if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
         g_overlaySeq++;
-        std::cerr << "[Seq] hud-drawIndexed shader=" << shaderId << std::endl;
+        // Report the depth state each HUD draw runs with: if depthTest=1 the stale-depth theory holds and
+        // the one-shot depth reset should bring the HUD back; if depthTest=0 the HUD is discarded for some
+        // other reason (pivot to composite-at-present).
+        std::cerr << "[Seq] hud-drawIndexed shader=" << shaderId << " depthTest=" << overlayDepthTestEnable
+                  << " depthWrite=" << overlayDepthWriteEnable << " compareOp=" << overlayDepthCompareOp
+                  << std::endl;
     }
 
     switchOverlayDraw();

@@ -537,6 +537,11 @@ void PipelineContext::fuseWorld() {
 
     uiModuleContext->end();
 
+    // 26.2 in-world HUD fix: this frame composites a world, so the mod cancelled LevelRenderer.render and
+    // the shared overlay depth buffer was never cleared by MC. Mark it for a one-shot reset at the first
+    // overlay draw pass (switchOverlayDraw) so the depth-tested HUD isn't discarded against stale depth.
+    uiModuleContext->overlayDepthPendingClear = true;
+
     auto mainQueueIndex = framework->physicalDevice()->mainQueueIndex();
     auto overlayCommandBuffer = context->overlayCommandBuffer;
 

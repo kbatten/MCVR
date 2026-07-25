@@ -183,6 +183,14 @@ struct UIModuleContext : public SharedObject<UIModuleContext> {
     float overlayClearDepth;
     uint32_t overlayClearStencil;
 
+    // 26.2 in-world HUD fix: fuseWorld composites the RT world into overlayDrawColorImage (color only), but
+    // the mod cancels the world's LevelRenderer.render -- the render pass that would clear the shared depth
+    // buffer never runs in-world. The overlay depth attachment is LOAD_OP_LOAD, so the depth-tested HUD draws
+    // test against stale/garbage depth and get discarded (world shows, HUD/menu vanish). fuseWorld sets this
+    // each frame so switchOverlayDraw resets depth once, at the first overlay pass, before any HUD draw. The
+    // menu path never runs fuseWorld, so this stays false there and MC's own depth clear is used as before.
+    bool overlayDepthPendingClear = false;
+
     OverlayMode overlayMode;
 
     std::shared_ptr<vk::DescriptorTable> overlayDescriptorTable;
