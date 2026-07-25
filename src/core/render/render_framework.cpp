@@ -78,9 +78,13 @@ void FrameworkContext::fuseFinal() {
     fuseCommandBuffer->barriersBufferImage(
         {}, {
                 {
-                    .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    // The present blit reads overlayDrawColorImage, whose last writes are the HUD draws at
+                    // COLOR_ATTACHMENT_OUTPUT (render pass store). FRAGMENT_SHADER|TRANSFER did not include
+                    // that stage, so the blit saw the fuseWorld world blit (a TRANSFER write) but not the HUD
+                    // (a COLOR write) -> world showed, HUD/menus vanished in-world. Wait on all prior work.
+                    .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                     .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                     .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                     .oldLayout = pipelineContext->uiModuleContext->overlayDrawColorImage->imageLayout(),
                     .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
