@@ -161,7 +161,8 @@ void FrameworkContext::fuseFinal() {
     // also set) appears -> outputImage has content and the overlay compositing is the bug. Still black ->
     // outputImage itself is black (the RT output, despite the trace dispatching). Overwrites the swapchain
     // the overlay blit just wrote. Gated by env var.
-    if (std::getenv("RADIANCE_DEBUG_PRESENT_WORLD") != nullptr && pipelineContext->worldPipelineContext != nullptr &&
+    if (std::getenv("RADIANCE_DEBUG_PRESENT_WORLD") != nullptr && Renderer::instance().world()->shouldRender() &&
+        pipelineContext->worldPipelineContext != nullptr &&
         pipelineContext->worldPipelineContext->outputImage != nullptr) {
         auto worldImg = pipelineContext->worldPipelineContext->outputImage;
         fuseCommandBuffer->barriersBufferImage(
