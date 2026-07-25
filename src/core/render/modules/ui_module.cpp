@@ -1486,10 +1486,9 @@ void UIModuleContext::clearOverlayEntireColorAttachment() {
     // TEMP diagnostic (see [FuseDbg] in pipeline.cpp fuseWorld): this full-image overlay clear is driven by
     // MC's GlStateManager _clear/_clearBuffer. If it records after fuseWorld's world blit each frame it
     // wipes the world. Log call order; indented so it visually nests under the fuseWorld line.
-    static int clearDbg = 0;
-    if (clearDbg < 80) {
-        clearDbg++;
-        std::cerr << "[FuseDbg]     clearOverlayEntireColorAttachment" << std::endl;
+    static long long clearDbg = 0;
+    if ((clearDbg++ % 120) == 0) {
+        std::cerr << "[FuseDbg]     clearOverlayEntireColorAttachment (call #" << clearDbg << ")" << std::endl;
     }
 
     switchOverlayDraw();

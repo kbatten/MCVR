@@ -515,16 +515,18 @@ void PipelineContext::fuseWorld() {
     auto framework = context->framework.lock();
     if (!framework->isRunning()) return;
 
-    // TEMP diagnostic (world stays black even when the fuseWorld blit source is force-cleared): is an
-    // overlay clear (clearOverlayEntireColorAttachment, driven by MC's GlStateManager _clear/_clearBuffer)
-    // recorded into overlayCommandBuffer AFTER this world blit each frame, wiping it? Log the call order of
-    // fuseWorld vs the clear (single render thread -> log order == record order). Any
-    // clearOverlayEntireColorAttachment line appearing between two fuseWorld lines runs after the world
-    // blit and erases the world before present.
-    static int fuseDbg = 0;
-    if (fuseDbg < 80) {
-        fuseDbg++;
-        std::cerr << "[FuseDbg] fuseWorld blit (world -> overlay)" << std::endl;
+    // TEMP diagnostic (world stays black even when the fuseWorld blit source is force-cleared): log the
+    // overlayDrawColorImage this blit targets (handle + frameIndex) so it can be compared against the image
+    // the present step (fuseFinal) reads. If they differ, fuseWorld writes a different frame's overlay than
+    // the one presented (frame/context mismatch). Also report the two debug env vars so the run is
+    // self-describing. Throttled, uncapped.
+    static long long fuseN = 0;
+    if ((fuseN++ % 120) == 0) {
+        std::cerr << "[FuseDbg] fuseWorld: overlayImg=0x" << std::hex
+                  << (uint64_t) uiModuleContext->overlayDrawColorImage->vkImage() << std::dec
+                  << " frame=" << context->frameIndex
+                  << " NO_OVERLAY_CLEAR=" << (std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") ? 1 : 0)
+                  << " CLEAR_OUTPUT=" << (std::getenv("RADIANCE_DEBUG_CLEAR_OUTPUT") ? 1 : 0) << std::endl;
     }
 
     uiModuleContext->end();

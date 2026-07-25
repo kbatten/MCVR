@@ -54,6 +54,16 @@ void FrameworkContext::fuseFinal() {
     auto mainQueueIndex = physicalDevice->mainQueueIndex();
     auto pipelineContext = f->pipeline_->acquirePipelineContext(shared_from_this());
 
+    // TEMP diagnostic: log the overlayDrawColorImage the present blits FROM (handle + frameIndex), to
+    // compare against fuseWorld's target ([FuseDbg] in pipeline.cpp). Matching handles -> same image, so a
+    // black world means it was overwritten/never blitted; differing handles -> frame/context mismatch.
+    static long long presN = 0;
+    if ((presN++ % 120) == 0) {
+        std::cerr << "[FuseDbg] present: overlayImg=0x" << std::hex
+                  << (uint64_t) pipelineContext->uiModuleContext->overlayDrawColorImage->vkImage() << std::dec
+                  << " frame=" << frameIndex << std::endl;
+    }
+
     fuseCommandBuffer->barriersBufferImage(
         {}, {
                 {
