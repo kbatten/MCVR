@@ -1566,6 +1566,12 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
 
     if (!framework->isRunning()) return;
 
+    extern long long g_overlaySeq;
+    if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
+        g_overlaySeq++;
+        std::cerr << "[Seq] hud-drawIndexed shader=" << shaderId << std::endl;
+    }
+
     switchOverlayDraw();
 
     auto &shaderInfo = module->overlayDrawShaderInfo(shaderId);

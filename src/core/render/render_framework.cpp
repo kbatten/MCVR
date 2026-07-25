@@ -47,10 +47,20 @@ FrameworkContext::~FrameworkContext() {
 #endif
 }
 
+// TEMP diagnostic: shared in-world op-sequence counter to order fuseWorld's world blit vs HUD drawIndexed
+// vs present within a frame (single render thread -> log order == execution order). Gated to in-world and
+// capped so it captures a few world frames without flooding.
+long long g_overlaySeq = 0;
+
 void FrameworkContext::fuseFinal() {
     auto f = framework.lock();
 
     if (!f->isRunning()) return;
+
+    if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
+        g_overlaySeq++;
+        std::cerr << "[Seq] present" << std::endl;
+    }
 
     auto mainQueueIndex = physicalDevice->mainQueueIndex();
     auto pipelineContext = f->pipeline_->acquirePipelineContext(shared_from_this());

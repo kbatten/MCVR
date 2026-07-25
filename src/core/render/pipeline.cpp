@@ -520,6 +520,11 @@ void PipelineContext::fuseWorld() {
     // the present step (fuseFinal) reads. If they differ, fuseWorld writes a different frame's overlay than
     // the one presented (frame/context mismatch). Also report the two debug env vars so the run is
     // self-describing. Throttled, uncapped.
+    extern long long g_overlaySeq;
+    if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
+        g_overlaySeq++;
+        std::cerr << "[Seq] fuseWorld-blit" << std::endl;
+    }
     static long long fuseN = 0;
     if ((fuseN++ % 120) == 0) {
         std::cerr << "[FuseDbg] fuseWorld: overlayImg=0x" << std::hex
