@@ -6,6 +6,7 @@
 #include "core/render/renderer.hpp"
 #include "core/render/world.hpp"
 
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <ostream>
@@ -1482,7 +1483,23 @@ void UIModuleContext::clearOverlayEntireColorAttachment() {
 
     if (!framework->isRunning()) return;
 
+    // TEMP diagnostic (see [FuseDbg] in pipeline.cpp fuseWorld): this full-image overlay clear is driven by
+    // MC's GlStateManager _clear/_clearBuffer. If it records after fuseWorld's world blit each frame it
+    // wipes the world. Log call order; indented so it visually nests under the fuseWorld line.
+    static int clearDbg = 0;
+    if (clearDbg < 80) {
+        clearDbg++;
+        std::cerr << "[FuseDbg]     clearOverlayEntireColorAttachment" << std::endl;
+    }
+
     switchOverlayDraw();
+
+    // TEMP experiment: if the full-image overlay clear is what erases the fuseWorld world blit (it runs
+    // after fuseWorld each frame), suppressing it should let the world show. Keep switchOverlayDraw() above
+    // so the render-pass/overlayMode state stays consistent; only skip the wipe. Gated by an env var. In a
+    // world fuseWorld overwrites the whole overlay each frame, so skipping this clear should not smear;
+    // menus (no fuseWorld) still rely on it, so this is a diagnostic, not the final fix.
+    if (std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") != nullptr) { return; }
 
     VkClearAttachment clearAttachment{};
     clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;

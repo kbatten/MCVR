@@ -515,6 +515,18 @@ void PipelineContext::fuseWorld() {
     auto framework = context->framework.lock();
     if (!framework->isRunning()) return;
 
+    // TEMP diagnostic (world stays black even when the fuseWorld blit source is force-cleared): is an
+    // overlay clear (clearOverlayEntireColorAttachment, driven by MC's GlStateManager _clear/_clearBuffer)
+    // recorded into overlayCommandBuffer AFTER this world blit each frame, wiping it? Log the call order of
+    // fuseWorld vs the clear (single render thread -> log order == record order). Any
+    // clearOverlayEntireColorAttachment line appearing between two fuseWorld lines runs after the world
+    // blit and erases the world before present.
+    static int fuseDbg = 0;
+    if (fuseDbg < 80) {
+        fuseDbg++;
+        std::cerr << "[FuseDbg] fuseWorld blit (world -> overlay)" << std::endl;
+    }
+
     uiModuleContext->end();
 
     auto mainQueueIndex = framework->physicalDevice()->mainQueueIndex();
