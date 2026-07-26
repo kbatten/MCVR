@@ -251,6 +251,11 @@ void FrameworkContext::fuseFinal() {
         worldImg->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     }
+
+    // End of frame: clear the in-world compositing flag. fuseWorld sets it each frame it blits the RT world
+    // as the overlay background; clearOverlayEntireColorAttachment reads it to skip the world-wiping color
+    // clear. Reset here so a subsequent menu frame (no fuseWorld) clears normally.
+    pipelineContext->uiModuleContext->overlayWorldComposited = false;
 }
 
 Framework::Framework() {}

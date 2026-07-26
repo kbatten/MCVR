@@ -1515,23 +1515,24 @@ void UIModuleContext::clearOverlayEntireColorAttachment() {
 
     if (!framework->isRunning()) return;
 
-    // TEMP diagnostic (see [FuseDbg] in pipeline.cpp fuseWorld): this full-image overlay clear is driven by
-    // MC's GlStateManager _clear/_clearBuffer. If it records after fuseWorld's world blit each frame it
-    // wipes the world. Log call order; indented so it visually nests under the fuseWorld line.
-    static long long clearDbg = 0;
-    if ((clearDbg++ % 120) == 0) {
-        std::cerr << "[FuseDbg]     clearOverlayEntireColorAttachment (call #" << clearDbg << ")" << std::endl;
-    }
-
     switchOverlayDraw();
 
     // 26.2 black world (fix): MC routes its per-frame color clear here (GlStateManager _clear/_clearBuffer
-    // -> DrawCommandProxy.Overlay.glClear). In a world, fuseWorld blits the whole world over the overlay
-    // every frame, so that blit -- not this clear -- is the per-frame reset; letting this full-image clear
-    // run would wipe the composited world (leaving black behind the HUD). Skip the color clear whenever a
-    // world is being composited; menus (no fuseWorld) still rely on it. switchOverlayDraw() above already
-    // ran so overlayMode/render-pass state stays consistent. Env var forces the skip for diagnostics.
-    if (std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") != nullptr || Renderer::instance().world()->shouldRender()) {
+    // -> DrawCommandProxy.Overlay.glClear). In a world, fuseWorld blits the whole world over the overlay as
+    // the background, so THIS full-image clear -- if it runs after that blit -- wipes the composited world
+    // to transparent (-> black). Skip it whenever this frame's overlay background is the world
+    // (overlayWorldComposited, set by fuseWorld). That reliably skips only post-blit clears: the harmless
+    // frame-start clear still runs (flag not yet set) and menus still clear (fuseWorld never runs).
+    // Previously gated on world()->shouldRender(), whose value at clear time did not reliably line up with
+    // the blit -- the prime suspect for the world staying black on the normal (non-PRESENT_WORLD) path.
+    bool sr = Renderer::instance().world()->shouldRender();
+    bool skip = std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") != nullptr || overlayWorldComposited;
+    static long long clearDbg = 0;
+    if ((clearDbg++ % 120) == 0) {
+        std::cerr << "[ClearDbg] clearOverlayColor: shouldRender=" << sr
+                  << " worldComposited=" << overlayWorldComposited << " skip=" << skip << std::endl;
+    }
+    if (skip) {
         return;
     }
 

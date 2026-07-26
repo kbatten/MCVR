@@ -191,6 +191,15 @@ struct UIModuleContext : public SharedObject<UIModuleContext> {
     // menu path never runs fuseWorld, so this stays false there and MC's own depth clear is used as before.
     bool overlayDepthPendingClear = false;
 
+    // 26.2 in-world compositing: true for exactly the frames where fuseWorld blitted the RT world into
+    // overlayDrawColorImage as the background. clearOverlayEntireColorAttachment uses it to skip MC's
+    // full-image color clear (which would otherwise wipe the composited world back to transparent -> black)
+    // for clears that happen AFTER the world blit, while still allowing the harmless frame-start clear (flag
+    // still false then) and the menu clears (fuseWorld never runs). More reliable than gating on
+    // world()->shouldRender(), whose value at clear time isn't guaranteed to line up with the blit. Set by
+    // fuseWorld, reset by fuseFinal each frame.
+    bool overlayWorldComposited = false;
+
     OverlayMode overlayMode;
 
     std::shared_ptr<vk::DescriptorTable> overlayDescriptorTable;

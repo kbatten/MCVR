@@ -542,6 +542,11 @@ void PipelineContext::fuseWorld() {
     // overlay draw pass (switchOverlayDraw) so the depth-tested HUD isn't discarded against stale depth.
     uiModuleContext->overlayDepthPendingClear = true;
 
+    // 26.2 in-world compositing fix: mark that this frame's overlay background IS the RT world (blitted just
+    // below). clearOverlayEntireColorAttachment reads this to skip MC's full-image color clear that would
+    // otherwise wipe the composited world to transparent -> black. Reset by fuseFinal at end of frame.
+    uiModuleContext->overlayWorldComposited = true;
+
     auto mainQueueIndex = framework->physicalDevice()->mainQueueIndex();
     auto overlayCommandBuffer = context->overlayCommandBuffer;
 
