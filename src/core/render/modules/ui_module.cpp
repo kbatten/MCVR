@@ -1615,6 +1615,16 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
         return;
     }
 
+    // Isolation probe: run the overlay render pass (begin it via switchOverlayDraw, end it at submitCommand)
+    // but skip the actual draw commands. World survives to present -> the render pass LOAD/STORE preserves
+    // the fuseWorld blit and the HUD draw commands (e.g. a fullscreen vignette with wrong blend) are what
+    // wipe it. World goes black -> the render pass itself (LOAD not preserving the blit) is the culprit.
+    // Off by default.
+    if (std::getenv("RADIANCE_DEBUG_EMPTY_PASS") != nullptr && Renderer::instance().world()->shouldRender()) {
+        switchOverlayDraw();
+        return;
+    }
+
     switchOverlayDraw();
 
     auto &shaderInfo = module->overlayDrawShaderInfo(shaderId);
