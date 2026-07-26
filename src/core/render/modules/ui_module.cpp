@@ -1607,6 +1607,14 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
                   << std::endl;
     }
 
+    // Isolation probe: skip every HUD draw in-world so no overlay render pass runs and present shows the raw
+    // fuseWorld world blit. World visible with this set -> fuseWorld's blit into overlayDrawColorImage works
+    // and the overlay render pass (LOAD/STORE) or the HUD draws are what lose it. Still black -> the blit
+    // itself is failing (blit source layout / sync). Off by default.
+    if (std::getenv("RADIANCE_DEBUG_SKIP_HUD") != nullptr && Renderer::instance().world()->shouldRender()) {
+        return;
+    }
+
     switchOverlayDraw();
 
     auto &shaderInfo = module->overlayDrawShaderInfo(shaderId);

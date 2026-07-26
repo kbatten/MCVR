@@ -553,16 +553,16 @@ void PipelineContext::fuseWorld() {
     overlayCommandBuffer->barriersBufferImage(
         {}, {
                 {
-                    .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT |
-                                    VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                    // Match the proven RADIANCE_DEBUG_PRESENT_WORLD blit (render_framework.cpp): the FSR/XeSS
+                    // upscaler leaves outputImage in GENERAL (fsr/xess *_module.cpp), so this barrier's old
+                    // hardcoded PRESENT_SRC oldLayout was a layout mismatch -- reading the blit source from a
+                    // layout the image isn't in, which can undefine its contents (-> black overlay). Use the
+                    // tracked layout and wait on all prior world work, exactly like PRESENT_WORLD.
+                    .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                     .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                    .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                     .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-#ifdef USE_AMD
-                    .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-#else
-                    .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-#endif
+                    .oldLayout = worldPipelineContext->outputImage->imageLayout(),
                     .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                     .srcQueueFamilyIndex = mainQueueIndex,
                     .dstQueueFamilyIndex = mainQueueIndex,
