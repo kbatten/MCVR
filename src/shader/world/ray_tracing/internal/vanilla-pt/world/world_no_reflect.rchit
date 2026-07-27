@@ -169,6 +169,14 @@ void main() {
 #ifdef RADIANCE_DEBUG_ALBEDO
     tint = albedoValue.rgb;
 #endif
+#ifdef RADIANCE_DEBUG_UV
+    tint = vec3(textureUV.x, textureUV.y, 0.0);
+#endif
+#ifdef RADIANCE_DEBUG_TEXID
+    tint = textureID == 0u ? vec3(0.0)
+                           : vec3(fract(float(textureID) * 0.6180339887), fract(float(textureID) * 0.13),
+                                  fract(float(textureID) * 0.37));
+#endif
 
     albedoValue = vec4(tint, albedoValue.a);
     LabPBRMat mat = convertLabPBRMaterial(albedoValue, specularValue, normalValue);

@@ -36,12 +36,22 @@ RayTracingModule::createShader(std::shared_ptr<vk::Device> device,
                                const std::unordered_map<std::string, std::string> &definitions,
                                const std::vector<std::string> &includeDirectories,
                                const std::string &injectedSource) {
-    // Diagnostic: RADIANCE_DEBUG_ALBEDO injects a shader #define so world.rgen (the only shader with the
-    // matching #ifdef) outputs raw surface albedo instead of shaded radiance -- splits "black terrain = zero
-    // albedo (texture/UV)" from "= zero light". Env-gated at startup like the other RADIANCE_DEBUG_* flags.
-    if (std::getenv("RADIANCE_DEBUG_ALBEDO") != nullptr) {
-        std::unordered_map<std::string, std::string> debugDefinitions = definitions;
-        debugDefinitions["RADIANCE_DEBUG_ALBEDO"] = "1";
+    // Diagnostics: these env vars inject a shader #define (only the world hit/rgen shaders have the matching
+    // #ifdef) to visualize surface data for the black-terrain investigation, env-gated at startup like the
+    // other RADIANCE_DEBUG_* flags:
+    //   RADIANCE_DEBUG_ALBEDO -> raw texture-sample albedo (isolate zero texture vs zero vertex color).
+    //   RADIANCE_DEBUG_UV     -> sampled UV as color (is it a sane 0..1 gradient?).
+    //   RADIANCE_DEBUG_TEXID  -> hash-color of the surface textureID (0 -> black; sane ids -> distinct).
+    static const char *kDebugDefines[] = {"RADIANCE_DEBUG_ALBEDO", "RADIANCE_DEBUG_UV", "RADIANCE_DEBUG_TEXID"};
+    std::unordered_map<std::string, std::string> debugDefinitions = definitions;
+    bool anyDebug = false;
+    for (const char *name : kDebugDefines) {
+        if (std::getenv(name) != nullptr) {
+            debugDefinitions[name] = "1";
+            anyDebug = true;
+        }
+    }
+    if (anyDebug) {
         return vk::Shader::create(device, path.string(), stage, debugDefinitions, includeDirectories,
                                   injectedSource);
     }
