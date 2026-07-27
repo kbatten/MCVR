@@ -164,6 +164,12 @@ void main() {
         tint = mix(overlayColor.rgb, albedoValue.rgb * colorLayer, overlayColor.a) + glint;
     }
 
+    // Diagnostic (RADIANCE_DEBUG_ALBEDO): output the raw texture sample instead of texture*colorLayer, to
+    // split a zero texture (empty atlas / bad UV) from a zero vertex colorLayer. See default.rchit.
+#ifdef RADIANCE_DEBUG_ALBEDO
+    tint = albedoValue.rgb;
+#endif
+
     albedoValue = vec4(tint, albedoValue.a);
     LabPBRMat mat = convertLabPBRMaterial(albedoValue, specularValue, normalValue);
 

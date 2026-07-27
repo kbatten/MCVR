@@ -171,6 +171,14 @@ void sampleSurfaceState(bool useTexture,
         tint = mix(overlayColor.rgb, albedoValue.rgb * colorLayer, overlayColor.a) + glint;
     }
 
+    // Diagnostic: with RADIANCE_DEBUG_ALBEDO the rgen outputs this albedo to the screen. Here, output the
+    // RAW texture sample (albedoValue.rgb is still the pre-tint atlas sample) instead of texture*colorLayer,
+    // to split a zero texture (empty atlas / bad UV) from a zero vertex colorLayer. Textures show => the
+    // vertex color is the zero; still black => the texture/atlas/UV is the zero.
+#ifdef RADIANCE_DEBUG_ALBEDO
+    tint = albedoValue.rgb;
+#endif
+
     albedoValue = vec4(tint, albedoValue.a);
     LabPBRMat mat = convertLabPBRMaterial(albedoValue, specularValue, normalValue);
 
