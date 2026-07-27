@@ -42,7 +42,8 @@ RayTracingModule::createShader(std::shared_ptr<vk::Device> device,
     //   RADIANCE_DEBUG_ALBEDO -> raw texture-sample albedo (isolate zero texture vs zero vertex color).
     //   RADIANCE_DEBUG_UV     -> sampled UV as color (is it a sane 0..1 gradient?).
     //   RADIANCE_DEBUG_TEXID  -> hash-color of the surface textureID (0 -> black; sane ids -> distinct).
-    static const char *kDebugDefines[] = {"RADIANCE_DEBUG_ALBEDO", "RADIANCE_DEBUG_UV", "RADIANCE_DEBUG_TEXID"};
+    static const char *kDebugDefines[] = {"RADIANCE_DEBUG_ALBEDO", "RADIANCE_DEBUG_UV", "RADIANCE_DEBUG_TEXID",
+                                          "RADIANCE_DEBUG_GREEN"};
     std::unordered_map<std::string, std::string> debugDefinitions = definitions;
     bool anyDebug = false;
     for (const char *name : kDebugDefines) {
