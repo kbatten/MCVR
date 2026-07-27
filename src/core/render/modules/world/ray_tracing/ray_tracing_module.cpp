@@ -1837,6 +1837,16 @@ void RayTracingModule::bindTexture(std::shared_ptr<vk::Sampler> sampler,
     auto framework = framework_.lock();
 
     uint32_t size = framework->swapchain()->imageCount();
+    // Black-terrain diagnostic (reliable, native): the block atlas is glId 29 = 4096x2048, re-initialized
+    // several times. If the world RT textures[] descriptor at slot 29 is left as a stale small image (a bind
+    // skipped because the RT descriptor tables did not exist yet, and never re-bound to the final atlas), the
+    // RT samples empty -> 0 albedo -> black. Log every atlas-sized (>=1024 wide) bind: which index, the image
+    // dims, and whether the RT descriptor table existed (tableNull=1 => this bind was SKIPPED for the RT).
+    if (image != nullptr && image->width() >= 1024) {
+        bool tableNull = (size == 0) || (rayTracingDescriptorTables_[0] == nullptr);
+        std::cerr << "[RTBind] index=" << index << " " << image->width() << "x" << image->height()
+                  << " tableNull=" << (tableNull ? 1 : 0) << std::endl;
+    }
     for (uint32_t i = 0; i < size; i++) {
         if (rayTracingDescriptorTables_[i] != nullptr) {
             rayTracingDescriptorTables_[i]->bindSamplerImage(sampler, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
