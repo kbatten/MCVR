@@ -1141,10 +1141,13 @@ void main() {
         mainRay.radiance = heat;
     }
 #    endif
-    // Diagnostic (RADIANCE_DEBUG_ALBEDO): output raw surface albedo instead of shaded radiance, to split
-    // "black terrain = zero albedo (texture/UV)" from "= zero light". Sky keeps its radiance.
-#ifdef RADIANCE_DEBUG_ALBEDO
-    if (!hitSky) { mainRay.radiance = firstHitMat.albedoValue.rgb * firstHitMat.albedoValue.a; }
+    // Diagnostics: output the surface's debug value (albedoValue.rgb, which the hit shaders overwrite for
+    // RADIANCE_DEBUG_ALBEDO/UV/TEXID) instead of shaded radiance, to investigate the black terrain. Output
+    // rgb WITHOUT the alpha multiply so UV/TEXID stay visible on surfaces whose (empty) texture alpha is 0.
+    // Sky keeps its radiance. NOTE: cutout terrain with sampled alpha 0 is still discarded by the anyhit
+    // before this runs (it shows sky through); opaque/solid surfaces show the debug value.
+#if defined(RADIANCE_DEBUG_ALBEDO) || defined(RADIANCE_DEBUG_UV) || defined(RADIANCE_DEBUG_TEXID)
+    if (!hitSky) { mainRay.radiance = firstHitMat.albedoValue.rgb; }
 #endif
     imageStore(outputImage, ivec2(pixel), vec4(mainRay.radiance, 1.0));
 #endif
