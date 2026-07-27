@@ -1141,6 +1141,11 @@ void main() {
         mainRay.radiance = heat;
     }
 #    endif
+    // Diagnostic (RADIANCE_DEBUG_ALBEDO): output raw surface albedo instead of shaded radiance, to split
+    // "black terrain = zero albedo (texture/UV)" from "= zero light". Sky keeps its radiance.
+#ifdef RADIANCE_DEBUG_ALBEDO
+    if (!hitSky) { mainRay.radiance = firstHitMat.albedoValue.rgb * firstHitMat.albedoValue.a; }
+#endif
     imageStore(outputImage, ivec2(pixel), vec4(mainRay.radiance, 1.0));
 #endif
 }

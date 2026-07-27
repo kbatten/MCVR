@@ -1,5 +1,7 @@
 #include "core/render/modules/world/ray_tracing/ray_tracing_module.hpp"
 
+#include <cstdlib>
+
 #include "core/render/buffers.hpp"
 #include "core/render/chunks.hpp"
 #include "core/render/modules/world/ray_tracing/submodules/world_prepare.hpp"
@@ -34,6 +36,15 @@ RayTracingModule::createShader(std::shared_ptr<vk::Device> device,
                                const std::unordered_map<std::string, std::string> &definitions,
                                const std::vector<std::string> &includeDirectories,
                                const std::string &injectedSource) {
+    // Diagnostic: RADIANCE_DEBUG_ALBEDO injects a shader #define so world.rgen (the only shader with the
+    // matching #ifdef) outputs raw surface albedo instead of shaded radiance -- splits "black terrain = zero
+    // albedo (texture/UV)" from "= zero light". Env-gated at startup like the other RADIANCE_DEBUG_* flags.
+    if (std::getenv("RADIANCE_DEBUG_ALBEDO") != nullptr) {
+        std::unordered_map<std::string, std::string> debugDefinitions = definitions;
+        debugDefinitions["RADIANCE_DEBUG_ALBEDO"] = "1";
+        return vk::Shader::create(device, path.string(), stage, debugDefinitions, includeDirectories,
+                                  injectedSource);
+    }
     return vk::Shader::create(device, path.string(), stage, definitions, includeDirectories, injectedSource);
 }
 
