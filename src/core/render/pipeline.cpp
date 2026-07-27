@@ -516,25 +516,6 @@ void PipelineContext::fuseWorld() {
     auto framework = context->framework.lock();
     if (!framework->isRunning()) return;
 
-    // TEMP diagnostic (world stays black even when the fuseWorld blit source is force-cleared): log the
-    // overlayDrawColorImage this blit targets (handle + frameIndex) so it can be compared against the image
-    // the present step (fuseFinal) reads. If they differ, fuseWorld writes a different frame's overlay than
-    // the one presented (frame/context mismatch). Also report the two debug env vars so the run is
-    // self-describing. Throttled, uncapped.
-    extern long long g_overlaySeq;
-    if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
-        g_overlaySeq++;
-        std::cerr << "[Seq] fuseWorld-blit" << std::endl;
-    }
-    static long long fuseN = 0;
-    if ((fuseN++ % 120) == 0) {
-        std::cerr << "[FuseDbg] fuseWorld: overlayImg=0x" << std::hex
-                  << (uint64_t) uiModuleContext->overlayDrawColorImage->vkImage() << std::dec
-                  << " frame=" << context->frameIndex
-                  << " NO_OVERLAY_CLEAR=" << (std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") ? 1 : 0)
-                  << " CLEAR_OUTPUT=" << (std::getenv("RADIANCE_DEBUG_CLEAR_OUTPUT") ? 1 : 0) << std::endl;
-    }
-
     uiModuleContext->end();
 
     // 26.2 in-world HUD fix: this frame composites a world, so the mod cancelled LevelRenderer.render and
@@ -553,11 +534,10 @@ void PipelineContext::fuseWorld() {
     overlayCommandBuffer->barriersBufferImage(
         {}, {
                 {
-                    // Match the proven RADIANCE_DEBUG_PRESENT_WORLD blit (render_framework.cpp): the FSR/XeSS
-                    // upscaler leaves outputImage in GENERAL (fsr/xess *_module.cpp), so this barrier's old
-                    // hardcoded PRESENT_SRC oldLayout was a layout mismatch -- reading the blit source from a
-                    // layout the image isn't in, which can undefine its contents (-> black overlay). Use the
-                    // tracked layout and wait on all prior world work, exactly like PRESENT_WORLD.
+                    // The FSR/XeSS upscaler leaves outputImage in GENERAL (fsr/xess *_module.cpp), so a
+                    // hardcoded PRESENT_SRC oldLayout here was a layout mismatch -- reading the blit source
+                    // from a layout the image isn't in, which can undefine its contents (-> black overlay).
+                    // Use the tracked layout and wait on all prior world work.
                     .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                     .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                     .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
@@ -584,43 +564,6 @@ void PipelineContext::fuseWorld() {
             });
 
     uiModuleContext->overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-    // TEMP diagnostic (world renders pure black even with a full TLAS + a dispatching trace): when
-    // RADIANCE_DEBUG_CLEAR_OUTPUT is set, overwrite the EXACT blit source with solid magenta immediately
-    // before the blit, in the blit's own command buffer. This removes all render()/fuseWorld ordering and
-    // frame-buffering ambiguity: it tests only the blit -> overlay composite -> present path. Magenta on
-    // screen -> that path works and the black is that the RT output never lands in this outputImage (a
-    // render()/fuseWorld ordering / frame-index / instance mismatch). Still black -> the world image never
-    // reaches the screen at all (blit / present / overlay-composite bug). outputImage is TRANSFER_SRC here.
-    if (std::getenv("RADIANCE_DEBUG_CLEAR_OUTPUT") != nullptr) {
-        overlayCommandBuffer->barriersBufferImage({}, {{
-                                                          .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                          .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                          .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                          .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-                                                          .srcQueueFamilyIndex = mainQueueIndex,
-                                                          .dstQueueFamilyIndex = mainQueueIndex,
-                                                          .image = worldPipelineContext->outputImage,
-                                                          .subresourceRange = vk::wholeColorSubresourceRange,
-                                                      }});
-        const VkClearColorValue magenta{.float32 = {1.0f, 0.0f, 1.0f, 1.0f}};
-        vkCmdClearColorImage(overlayCommandBuffer->vkCommandBuffer(), worldPipelineContext->outputImage->vkImage(),
-                             VK_IMAGE_LAYOUT_GENERAL, &magenta, 1, &vk::wholeColorSubresourceRange);
-        overlayCommandBuffer->barriersBufferImage({}, {{
-                                                          .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                                          .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                          .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                                                          .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                          .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-                                                          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                          .srcQueueFamilyIndex = mainQueueIndex,
-                                                          .dstQueueFamilyIndex = mainQueueIndex,
-                                                          .image = worldPipelineContext->outputImage,
-                                                          .subresourceRange = vk::wholeColorSubresourceRange,
-                                                      }});
-    }
 
     // TODO: add to command buffer
     VkImageBlit imageBlit{};

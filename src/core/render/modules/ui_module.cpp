@@ -1523,16 +1523,7 @@ void UIModuleContext::clearOverlayEntireColorAttachment() {
     // to transparent (-> black). Skip it whenever this frame's overlay background is the world
     // (overlayWorldComposited, set by fuseWorld). That reliably skips only post-blit clears: the harmless
     // frame-start clear still runs (flag not yet set) and menus still clear (fuseWorld never runs).
-    // Previously gated on world()->shouldRender(), whose value at clear time did not reliably line up with
-    // the blit -- the prime suspect for the world staying black on the normal (non-PRESENT_WORLD) path.
-    bool sr = Renderer::instance().world()->shouldRender();
-    bool skip = std::getenv("RADIANCE_DEBUG_NO_OVERLAY_CLEAR") != nullptr || overlayWorldComposited;
-    static long long clearDbg = 0;
-    if ((clearDbg++ % 120) == 0) {
-        std::cerr << "[ClearDbg] clearOverlayColor: shouldRender=" << sr
-                  << " worldComposited=" << overlayWorldComposited << " skip=" << skip << std::endl;
-    }
-    if (skip) {
+    if (overlayWorldComposited) {
         return;
     }
 
@@ -1586,44 +1577,6 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
     auto module = uiModule.lock();
 
     if (!framework->isRunning()) return;
-
-    extern long long g_overlaySeq;
-    if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
-        g_overlaySeq++;
-        // depthTest=0 (proven) rules out stale-depth discard. Localize the real cause in one run by logging
-        // where this HUD draw goes and the state that could kill its fragments:
-        //   img=  -> compare to [FuseDbg] fuseWorld/present handle; mismatch = frame/context mismatch (HUD
-        //            lands in an image nobody presents).
-        //   scis= -> a zero/offset scissor clips the HUD out; enabled flag + rect.
-        //   view= -> a zero/wrong viewport.
-        //   blend/mask -> blend or a zeroed color-write-mask nulls the output over the opaque world.
-        std::cerr << "[Seq] hud-drawIndexed shader=" << shaderId << std::hex << " img=0x"
-                  << (uint64_t) overlayDrawColorImage->vkImage() << std::dec << " scis=" << overlayScissorEnabled
-                  << "(" << overlayScissor.offset.x << "," << overlayScissor.offset.y << " "
-                  << overlayScissor.extent.width << "x" << overlayScissor.extent.height << ")"
-                  << " view=(" << (int) overlayViewport.x << "," << (int) overlayViewport.y << " "
-                  << (int) overlayViewport.width << "x" << (int) overlayViewport.height << ")"
-                  << " blend=" << overlayBlendEnabled << " mask=0x" << std::hex << overlayColorWriteMask << std::dec
-                  << std::endl;
-    }
-
-    // Isolation probe: skip every HUD draw in-world so no overlay render pass runs and present shows the raw
-    // fuseWorld world blit. World visible with this set -> fuseWorld's blit into overlayDrawColorImage works
-    // and the overlay render pass (LOAD/STORE) or the HUD draws are what lose it. Still black -> the blit
-    // itself is failing (blit source layout / sync). Off by default.
-    if (std::getenv("RADIANCE_DEBUG_SKIP_HUD") != nullptr && Renderer::instance().world()->shouldRender()) {
-        return;
-    }
-
-    // Isolation probe: run the overlay render pass (begin it via switchOverlayDraw, end it at submitCommand)
-    // but skip the actual draw commands. World survives to present -> the render pass LOAD/STORE preserves
-    // the fuseWorld blit and the HUD draw commands (e.g. a fullscreen vignette with wrong blend) are what
-    // wipe it. World goes black -> the render pass itself (LOAD not preserving the blit) is the culprit.
-    // Off by default.
-    if (std::getenv("RADIANCE_DEBUG_EMPTY_PASS") != nullptr && Renderer::instance().world()->shouldRender()) {
-        switchOverlayDraw();
-        return;
-    }
 
     switchOverlayDraw();
 

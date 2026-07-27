@@ -47,33 +47,13 @@ FrameworkContext::~FrameworkContext() {
 #endif
 }
 
-// TEMP diagnostic: shared in-world op-sequence counter to order fuseWorld's world blit vs HUD drawIndexed
-// vs present within a frame (single render thread -> log order == execution order). Gated to in-world and
-// capped so it captures a few world frames without flooding.
-long long g_overlaySeq = 0;
-
 void FrameworkContext::fuseFinal() {
     auto f = framework.lock();
 
     if (!f->isRunning()) return;
 
-    if (Renderer::instance().world()->shouldRender() && g_overlaySeq < 400) {
-        g_overlaySeq++;
-        std::cerr << "[Seq] present" << std::endl;
-    }
-
     auto mainQueueIndex = physicalDevice->mainQueueIndex();
     auto pipelineContext = f->pipeline_->acquirePipelineContext(shared_from_this());
-
-    // TEMP diagnostic: log the overlayDrawColorImage the present blits FROM (handle + frameIndex), to
-    // compare against fuseWorld's target ([FuseDbg] in pipeline.cpp). Matching handles -> same image, so a
-    // black world means it was overwritten/never blitted; differing handles -> frame/context mismatch.
-    static long long presN = 0;
-    if ((presN++ % 120) == 0) {
-        std::cerr << "[FuseDbg] present: overlayImg=0x" << std::hex
-                  << (uint64_t) pipelineContext->uiModuleContext->overlayDrawColorImage->vkImage() << std::dec
-                  << " frame=" << frameIndex << std::endl;
-    }
 
     fuseCommandBuffer->barriersBufferImage(
         {}, {
@@ -168,89 +148,6 @@ void FrameworkContext::fuseFinal() {
     pipelineContext->uiModuleContext->overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 #endif
     swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    // TEMP diagnostic (world stays black even with the overlay clear off + a magenta blit source): present
-    // the raw world outputImage STRAIGHT to the swapchain, bypassing the whole fuseWorld->overlay->present
-    // path. This isolates the two remaining possibilities. World/terrain (or magenta, if CLEAR_OUTPUT is
-    // also set) appears -> outputImage has content and the overlay compositing is the bug. Still black ->
-    // outputImage itself is black (the RT output, despite the trace dispatching). Overwrites the swapchain
-    // the overlay blit just wrote. Gated by env var.
-    if (std::getenv("RADIANCE_DEBUG_PRESENT_WORLD") != nullptr && Renderer::instance().world()->shouldRender() &&
-        pipelineContext->worldPipelineContext != nullptr &&
-        pipelineContext->worldPipelineContext->outputImage != nullptr) {
-        auto worldImg = pipelineContext->worldPipelineContext->outputImage;
-        fuseCommandBuffer->barriersBufferImage(
-            {}, {
-                    {
-                        .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                        .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                        .oldLayout = worldImg->imageLayout(),
-                        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        .srcQueueFamilyIndex = mainQueueIndex,
-                        .dstQueueFamilyIndex = mainQueueIndex,
-                        .image = worldImg,
-                        .subresourceRange = vk::wholeColorSubresourceRange,
-                    },
-                    {
-                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                        .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                        .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        .srcQueueFamilyIndex = mainQueueIndex,
-                        .dstQueueFamilyIndex = mainQueueIndex,
-                        .image = swapchainImage,
-                        .subresourceRange = vk::wholeColorSubresourceRange,
-                    },
-                });
-        worldImg->imageLayout() = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-        VkImageBlit worldBlit{};
-        worldBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        worldBlit.srcSubresource.layerCount = 1;
-        worldBlit.srcOffsets[1] = {static_cast<int>(worldImg->width()), static_cast<int>(worldImg->height()), 1};
-        worldBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        worldBlit.dstSubresource.layerCount = 1;
-        worldBlit.dstOffsets[1] = {static_cast<int>(swapchainImage->width()),
-                                   static_cast<int>(swapchainImage->height()), 1};
-        vkCmdBlitImage(fuseCommandBuffer->vkCommandBuffer(), worldImg->vkImage(),
-                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchainImage->vkImage(),
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &worldBlit, VK_FILTER_LINEAR);
-
-        fuseCommandBuffer->barriersBufferImage(
-            {}, {
-                    {
-                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                        .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                        .srcQueueFamilyIndex = mainQueueIndex,
-                        .dstQueueFamilyIndex = mainQueueIndex,
-                        .image = worldImg,
-                        .subresourceRange = vk::wholeColorSubresourceRange,
-                    },
-                    {
-                        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                        .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
-                        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                        .srcQueueFamilyIndex = mainQueueIndex,
-                        .dstQueueFamilyIndex = mainQueueIndex,
-                        .image = swapchainImage,
-                        .subresourceRange = vk::wholeColorSubresourceRange,
-                    },
-                });
-        worldImg->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    }
 
     // End of frame: clear the in-world compositing flag. fuseWorld sets it each frame it blits the RT world
     // as the overlay background; clearOverlayEntireColorAttachment reads it to skip the world-wiping color
