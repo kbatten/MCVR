@@ -182,7 +182,9 @@ void sampleSurfaceState(bool useTexture,
     tint = vec3(uv.x, uv.y, 0.0);
 #endif
 #ifdef RADIANCE_DEBUG_TEXID
-    tint = textureID == 0u ? vec3(0.0)
+    // Magenta (not black) for textureID==0 so "probe active + zero id" is distinguishable from "probe never
+    // ran" (which leaves the normal black render). Distinct hashed colors for valid ids.
+    tint = textureID == 0u ? vec3(1.0, 0.0, 1.0)
                            : vec3(fract(float(textureID) * 0.6180339887), fract(float(textureID) * 0.13),
                                   fract(float(textureID) * 0.37));
 #endif
