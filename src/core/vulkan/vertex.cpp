@@ -1,5 +1,7 @@
 #include "core/vulkan/vertex.hpp"
 
+#include <iostream>
+
 #include "common/shared.hpp"
 
 uint32_t vk::Vertex::packMaterialFlags(const VertexFormat::PBRVertex &vertex) {
@@ -23,6 +25,19 @@ vk::VertexFormat::PositionVertex vk::Vertex::makePositionVertex(const VertexForm
 }
 
 vk::VertexFormat::MaterialVertex vk::Vertex::makeMaterialVertex(const VertexFormat::PBRVertex &vertex) {
+    // Black-terrain diagnostic (reliable, native -- the rgen shader probes are moot under NRD demodulation).
+    // The atlas (glId 29, 4096x2048) is filled and bound at RT slot 29, textureID=29 is captured, geometry is
+    // in the TLAS -- yet black. Log the first few textured vertices' textureID + textureUV to check the UV is
+    // sane atlas-space [0,1] (not 0 / not pixel coords / not a wrong range). uv=0 or huge => UV capture/space
+    // bug; sane => the fault is downstream (material/lighting), not albedo.
+    static int radianceMatDbg = 0;
+    if (radianceMatDbg < 12 && vertex.useTexture > 0) {
+        radianceMatDbg++;
+        std::cerr << "[MatDbg] textureID=" << vertex.textureID << " uv=(" << vertex.textureUV.x << ", "
+                  << vertex.textureUV.y << ") useTex=" << vertex.useTexture << " useColor=" << vertex.useColorLayer
+                  << " color=(" << vertex.colorLayer.x << "," << vertex.colorLayer.y << "," << vertex.colorLayer.z
+                  << ")" << std::endl;
+    }
     return {
         .norm = vertex.norm,
         .textureID = vertex.textureID,
