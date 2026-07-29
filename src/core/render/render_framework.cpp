@@ -226,7 +226,8 @@ void FrameworkContext::fuseFinal() {
     // direct-light / indirect-light G-buffer straight to the swapchain, bypassing the NRD light*albedo
     // composite. albedo shows terrain textures => albedo is correct and the black is LIGHTING; direct-light
     // black => surfaces receive no direct light (confirm the lighting bug). Reliable native.
-    if (const char *gbufEnv = std::getenv("RADIANCE_DEBUG_PRESENT_GBUFFER")) {
+    if (const char *gbufEnv = std::getenv("RADIANCE_DEBUG_PRESENT_GBUFFER");
+        gbufEnv != nullptr && pipelineContext->worldPipelineContext != nullptr) {
         std::shared_ptr<vk::DeviceLocalImage> gbufImg = nullptr;
         for (auto &mctx : pipelineContext->worldPipelineContext->worldModuleContexts) {
             auto rtctx = std::dynamic_pointer_cast<RayTracingModuleContext>(mctx);
