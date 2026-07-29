@@ -149,6 +149,78 @@ void FrameworkContext::fuseFinal() {
 #endif
     swapchainImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+    // Black-terrain diagnostic: RADIANCE_DEBUG_PRESENT_ATLAS=<glId> blits that texture straight to the
+    // swapchain so we can see exactly what the RT samples at that slot (e.g. the block atlas glId 29). A
+    // proper block atlas (grass/stone sprites) => texture data is correct and the black is UV-alignment or
+    // lighting; empty/garbage/wrong => the atlas the RT samples is bad. Reliable native, no shader dependency.
+    if (const char *atlasIdEnv = std::getenv("RADIANCE_DEBUG_PRESENT_ATLAS")) {
+        auto atlasImg = Renderer::instance().textures()->texture(static_cast<uint32_t>(std::atoi(atlasIdEnv)));
+        if (atlasImg != nullptr) {
+            VkImageLayout atlasLayout = atlasImg->imageLayout();
+            fuseCommandBuffer->barriersBufferImage(
+                {}, {{
+                         .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                         .oldLayout = atlasLayout,
+                         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = atlasImg,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     },
+                     {
+                         .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = swapchainImage,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     }});
+            VkImageBlit atlasBlit{};
+            atlasBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            atlasBlit.srcSubresource.layerCount = 1;
+            atlasBlit.srcOffsets[1] = {static_cast<int>(atlasImg->width()), static_cast<int>(atlasImg->height()), 1};
+            atlasBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            atlasBlit.dstSubresource.layerCount = 1;
+            atlasBlit.dstOffsets[1] = {static_cast<int>(swapchainImage->width()),
+                                       static_cast<int>(swapchainImage->height()), 1};
+            vkCmdBlitImage(fuseCommandBuffer->vkCommandBuffer(), atlasImg->vkImage(),
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchainImage->vkImage(),
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &atlasBlit, VK_FILTER_LINEAR);
+            fuseCommandBuffer->barriersBufferImage(
+                {}, {{
+                         .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         .newLayout = atlasLayout,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = atlasImg,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     },
+                     {
+                         .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = swapchainImage,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     }});
+        }
+    }
+
     // End of frame: clear the in-world compositing flag. fuseWorld sets it each frame it blits the RT world
     // as the overlay background; clearOverlayEntireColorAttachment reads it to skip the world-wiping color
     // clear. Reset here so a subsequent menu frame (no fuseWorld) clears normally.
