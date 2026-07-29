@@ -47,6 +47,17 @@ static void buildChunkPackedVertices(const std::vector<std::vector<vk::VertexFor
         packedIndices.insert(packedIndices.end(), geometryIndices.begin(), geometryIndices.end());
 
         for (const auto &vertex : geometryVertices) {
+            // Black-terrain diagnostic: log the first few CHUNK (terrain) vertices specifically. The generic
+            // [MatDbg] in makeMaterialVertex can be hit by entities first. Terrain should have textureID = the
+            // block atlas glId (29) and atlas-space UVs; textureID=5 / small UVs would mean the terrain
+            // consumer is feeding a wrong (small) texture.
+            static int radianceChunkMatDbg = 0;
+            if (radianceChunkMatDbg < 12 && vertex.useTexture > 0) {
+                radianceChunkMatDbg++;
+                std::cerr << "[MatDbgChunk] textureID=" << vertex.textureID << " uv=(" << vertex.textureUV.x << ", "
+                          << vertex.textureUV.y << ") color=(" << vertex.colorLayer.x << "," << vertex.colorLayer.y
+                          << "," << vertex.colorLayer.z << ")" << std::endl;
+            }
             packedPositions.push_back(vk::Vertex::makePositionVertex(vertex));
             packedMaterials.push_back(vk::Vertex::makeMaterialVertex(vertex));
         }
