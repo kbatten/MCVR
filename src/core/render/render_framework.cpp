@@ -8,6 +8,7 @@
 #include "core/render/pipeline.hpp"
 #include "core/render/renderer.hpp"
 #include "core/render/textures.hpp"
+#include "core/render/modules/world/ray_tracing/ray_tracing_module.hpp"
 #include "core/render/world.hpp"
 
 #include <cstdlib>
@@ -204,6 +205,88 @@ void FrameworkContext::fuseFinal() {
                          .srcQueueFamilyIndex = mainQueueIndex,
                          .dstQueueFamilyIndex = mainQueueIndex,
                          .image = atlasImg,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     },
+                     {
+                         .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = swapchainImage,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     }});
+        }
+    }
+
+    // G-buffer present: RADIANCE_DEBUG_PRESENT_GBUFFER=albedo|direct|indirect blits the RT albedo /
+    // direct-light / indirect-light G-buffer straight to the swapchain, bypassing the NRD light*albedo
+    // composite. albedo shows terrain textures => albedo is correct and the black is LIGHTING; direct-light
+    // black => surfaces receive no direct light (confirm the lighting bug). Reliable native.
+    if (const char *gbufEnv = std::getenv("RADIANCE_DEBUG_PRESENT_GBUFFER")) {
+        std::shared_ptr<vk::DeviceLocalImage> gbufImg = nullptr;
+        for (auto &mctx : pipelineContext->worldPipelineContext->worldModuleContexts) {
+            auto rtctx = std::dynamic_pointer_cast<RayTracingModuleContext>(mctx);
+            if (rtctx != nullptr) {
+                std::string which = gbufEnv;
+                gbufImg = which == "direct"     ? rtctx->firstHitDiffuseDirectLightImage
+                          : which == "indirect" ? rtctx->firstHitDiffuseIndirectLightImage
+                                                : rtctx->diffuseAlbedoImage;
+                break;
+            }
+        }
+        if (gbufImg != nullptr) {
+            VkImageLayout gbufLayout = gbufImg->imageLayout();
+            fuseCommandBuffer->barriersBufferImage(
+                {}, {{
+                         .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                         .oldLayout = gbufLayout,
+                         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = gbufImg,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     },
+                     {
+                         .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = swapchainImage,
+                         .subresourceRange = vk::wholeColorSubresourceRange,
+                     }});
+            VkImageBlit gbufBlit{};
+            gbufBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            gbufBlit.srcSubresource.layerCount = 1;
+            gbufBlit.srcOffsets[1] = {static_cast<int>(gbufImg->width()), static_cast<int>(gbufImg->height()), 1};
+            gbufBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            gbufBlit.dstSubresource.layerCount = 1;
+            gbufBlit.dstOffsets[1] = {static_cast<int>(swapchainImage->width()),
+                                      static_cast<int>(swapchainImage->height()), 1};
+            vkCmdBlitImage(fuseCommandBuffer->vkCommandBuffer(), gbufImg->vkImage(),
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchainImage->vkImage(),
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &gbufBlit, VK_FILTER_NEAREST);
+            fuseCommandBuffer->barriersBufferImage(
+                {}, {{
+                         .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                         .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         .newLayout = gbufLayout,
+                         .srcQueueFamilyIndex = mainQueueIndex,
+                         .dstQueueFamilyIndex = mainQueueIndex,
+                         .image = gbufImg,
                          .subresourceRange = vk::wholeColorSubresourceRange,
                      },
                      {
