@@ -222,10 +222,16 @@ void FrameworkContext::fuseFinal() {
         }
     }
 
-    // G-buffer present: RADIANCE_DEBUG_PRESENT_GBUFFER=albedo|direct|indirect blits the RT albedo /
-    // direct-light / indirect-light G-buffer straight to the swapchain, bypassing the NRD light*albedo
-    // composite. albedo shows terrain textures => albedo is correct and the black is LIGHTING; direct-light
-    // black => surfaces receive no direct light (confirm the lighting bug). Reliable native.
+    // G-buffer present: RADIANCE_DEBUG_PRESENT_GBUFFER=<target> blits one RT G-buffer straight to the
+    // swapchain, bypassing the NRD light*albedo composite. Targets:
+    //   albedo/specalbedo   - base color G-buffers (albedo shows textures => albedo correct)
+    //   normal              - normal+roughness (terrain visible here => terrain IS being hit/traced)
+    //   depth/firsthitdepth - linear/first-hit depth (terrain visible => geometry in TLAS)
+    //   direct/indirect     - diffuse direct/indirect light (black => surfaces get no light: the bug)
+    //   emission/specular   - base emission / first-hit specular
+    // The hit-vs-shading split: if terrain shows in normal/depth but not in albedo/direct, terrain is
+    // traced fine and the bug is albedo/lighting shading; if terrain is blank in normal/depth too, the
+    // terrain geometry isn't in the trace (BLAS/TLAS). Reliable native.
     if (const char *gbufEnv = std::getenv("RADIANCE_DEBUG_PRESENT_GBUFFER");
         gbufEnv != nullptr && pipelineContext->worldPipelineContext != nullptr) {
         std::shared_ptr<vk::DeviceLocalImage> gbufImg = nullptr;
@@ -233,9 +239,26 @@ void FrameworkContext::fuseFinal() {
             auto rtctx = std::dynamic_pointer_cast<RayTracingModuleContext>(mctx);
             if (rtctx != nullptr) {
                 std::string which = gbufEnv;
-                gbufImg = which == "direct"     ? rtctx->firstHitDiffuseDirectLightImage
-                          : which == "indirect" ? rtctx->firstHitDiffuseIndirectLightImage
-                                                : rtctx->diffuseAlbedoImage;
+                if (which == "direct")
+                    gbufImg = rtctx->firstHitDiffuseDirectLightImage;
+                else if (which == "indirect")
+                    gbufImg = rtctx->firstHitDiffuseIndirectLightImage;
+                else if (which == "normal")
+                    gbufImg = rtctx->normalRoughnessImage;
+                else if (which == "depth")
+                    gbufImg = rtctx->linearDepthImage;
+                else if (which == "firsthitdepth")
+                    gbufImg = rtctx->firstHitDepthImage;
+                else if (which == "emission")
+                    gbufImg = rtctx->firstHitBaseEmissionImage;
+                else if (which == "specular")
+                    gbufImg = rtctx->firstHitSpecularImage;
+                else if (which == "specalbedo")
+                    gbufImg = rtctx->specularAlbedoImage;
+                else if (which == "motion")
+                    gbufImg = rtctx->motionVectorImage;
+                else
+                    gbufImg = rtctx->diffuseAlbedoImage;
                 break;
             }
         }
