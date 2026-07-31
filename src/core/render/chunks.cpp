@@ -46,6 +46,30 @@ static void buildChunkPackedVertices(const std::vector<std::vector<vk::VertexFor
 
         packedIndices.insert(packedIndices.end(), geometryIndices.begin(), geometryIndices.end());
 
+        // Black-terrain diagnostic (2026-07-30): terrain chunk BLAS ARE built + in the TLAS (chunksWithBLAS
+        // ~4235) yet terrain is not HIT (blank in normal/depth G-buffers) while entities are. A BLAS is built
+        // from POSITIONS + INDICES only -- never verified (only textureID/uv/color were). Log the actual first
+        // triangle the BLAS will use: index triple, the 3 positions, and area. Section-relative pos should be
+        // ~[0,16] with nonzero area. Zero/collapsed/huge/NaN pos or ~0 area => degenerate chunk geometry (the
+        // capture feeds bad positions/indices) = why rays pass through terrain.
+        static int radianceChunkGeoDbg = 0;
+        if (radianceChunkGeoDbg < 8 && geometryVertices.size() >= 3 && geometryIndices.size() >= 3) {
+            uint32_t i0 = geometryIndices[0], i1 = geometryIndices[1], i2 = geometryIndices[2];
+            if (i0 < geometryVertices.size() && i1 < geometryVertices.size() && i2 < geometryVertices.size()) {
+                radianceChunkGeoDbg++;
+                const auto &p0 = geometryVertices[i0].pos;
+                const auto &p1 = geometryVertices[i1].pos;
+                const auto &p2 = geometryVertices[i2].pos;
+                float area = 0.5f * glm::length(glm::cross(glm::vec3(p1) - glm::vec3(p0), glm::vec3(p2) - glm::vec3(p0)));
+                std::cerr << "[ChunkGeo] verts=" << geometryVertices.size() << " idx=" << geometryIndices.size()
+                          << " tri0 i=(" << i0 << "," << i1 << "," << i2 << ")"
+                          << " p0=(" << p0.x << "," << p0.y << "," << p0.z << ")"
+                          << " p1=(" << p1.x << "," << p1.y << "," << p1.z << ")"
+                          << " p2=(" << p2.x << "," << p2.y << "," << p2.z << ")"
+                          << " area=" << area << std::endl;
+            }
+        }
+
         for (const auto &vertex : geometryVertices) {
             // Black-terrain diagnostic: log the first few CHUNK (terrain) vertices specifically. The generic
             // [MatDbg] in makeMaterialVertex can be hit by entities first. Terrain should have textureID = the
