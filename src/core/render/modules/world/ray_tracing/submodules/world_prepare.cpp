@@ -221,6 +221,17 @@ void WorldPrepareContext::render() {
                             0, 1, 0, static_cast<float>(entities1[i]->y - cameraPos.y), //
                             0, 0, 1, static_cast<float>(entities1[i]->z - cameraPos.z), //
                         };
+                        // Black-terrain diagnostic (2026-07-31): chunk geometry is correct ([ChunkGeo]) yet
+                        // terrain is not HIT while entities ARE. Both use the same camera-relative scheme; log
+                        // the ENTITY world pos + camera-relative translate to compare against [ChunkXform].
+                        static int radianceEntXformDbg = 0;
+                        if (radianceEntXformDbg < 6) {
+                            radianceEntXformDbg++;
+                            std::cerr << "[EntXform] entPos=(" << entities1[i]->x << "," << entities1[i]->y << ","
+                                      << entities1[i]->z << ") translate=(" << (entities1[i]->x - cameraPos.x) << ","
+                                      << (entities1[i]->y - cameraPos.y) << "," << (entities1[i]->z - cameraPos.z)
+                                      << ")" << std::endl;
+                        }
                     } else if (entities1[i]->coordinate == World::Coordinates::CAMERA) {
                         glm::mat4 viewMat = glm::transpose(ubo->cameraViewMatInv); // column major to row major
 
@@ -335,6 +346,21 @@ void WorldPrepareContext::render() {
                 0, 1, 0, static_cast<float>(static_cast<double>(chunk1->y) - cameraPos.y), //
                 0, 0, 1, static_cast<float>(static_cast<double>(chunk1->z) - cameraPos.z), //
             };
+
+            // Black-terrain diagnostic (2026-07-31): log the chunk's world-block origin + camera-relative
+            // translate. Geometry is section-relative [0,16] ([ChunkGeo]); this transform must add the section
+            // WORLD-BLOCK origin (a multiple of 16 near the camera) for it to land where rays look. Compare
+            // scale/sign against [EntXform] (entities are hit). Section coords (~origin/16), zero, or huge here
+            // => terrain mis-placed off where the rays go = the miss.
+            static int radianceChunkXformDbg = 0;
+            if (radianceChunkXformDbg < 6) {
+                radianceChunkXformDbg++;
+                std::cerr << "[ChunkXform] chunkOrigin=(" << chunk1->x << "," << chunk1->y << "," << chunk1->z
+                          << ") cameraPos=(" << cameraPos.x << "," << cameraPos.y << "," << cameraPos.z
+                          << ") translate=(" << (static_cast<double>(chunk1->x) - cameraPos.x) << ","
+                          << (static_cast<double>(chunk1->y) - cameraPos.y) << ","
+                          << (static_cast<double>(chunk1->z) - cameraPos.z) << ")" << std::endl;
+            }
 
             instanceBuilder.defineInstance(transform, blasIndex, 0x01, blasGroupAccu, 0, chunk1->blas);
 
