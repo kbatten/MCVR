@@ -75,6 +75,11 @@ class RayTracingModule : public WorldModule, public SharedObject<RayTracingModul
 
     void preClose() override;
 
+    // Black-atmosphere diagnostic (2026-08-01): fetch a runtime-texture image (e.g. "trans_lut") by name so
+    // the present path can blit it. Distinguishes transLUT generated-black (generation broken) from transLUT
+    // fine-but-not-read (descriptor/set-5 wiring broken). Returns nullptr if not found.
+    std::shared_ptr<vk::DeviceLocalImage> debugRuntimeTextureImage(const std::string &name);
+
   private:
     constexpr static uint32_t sharcCapacity = 1u << 23;
     constexpr static uint32_t sharcResolveWorkgroupSize = 64;

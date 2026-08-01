@@ -720,6 +720,13 @@ std::shared_ptr<vk::DeviceLocalBuffer> RayTracingModule::findRuntimeVKBuffer(Sha
     return shaderPack_->findRuntimeVKBuffer(runtimeBuffer, frameIndex);
 }
 
+std::shared_ptr<vk::DeviceLocalImage> RayTracingModule::debugRuntimeTextureImage(const std::string &name) {
+    auto runtimeTexture = findRuntimeTexture(name);
+    if (!runtimeTexture.has_value()) { return nullptr; }
+    // trans_lut is shared, so frameIndex is ignored (findRuntimeVKTexture returns frameImages[0]).
+    return findRuntimeVKTexture(runtimeTexture->get(), 0);
+}
+
 std::shared_ptr<vk::DeviceLocalImage> RayTracingModule::findTargetImage(const std::string &target,
                                                                         uint32_t frameIndex) {
     if (target == TARGET_RADIANCE) return hdrNoisyOutputImages_[frameIndex];

@@ -257,7 +257,13 @@ void FrameworkContext::fuseFinal() {
                     gbufImg = rtctx->specularAlbedoImage;
                 else if (which == "motion")
                     gbufImg = rtctx->motionVectorImage;
-                else
+                else if (which == "translut") {
+                    // Blit the atmosphere transmittance LUT itself (256x64). A gradient => transLUT is
+                    // generated fine and the black lighting is a set-5 wiring issue (world pass can't read it);
+                    // solid black => the trans_lut pass output is empty (generation broken on this box).
+                    if (auto rtm = rtctx->rayTracingModule.lock())
+                        gbufImg = rtm->debugRuntimeTextureImage("trans_lut");
+                } else
                     gbufImg = rtctx->diffuseAlbedoImage;
                 break;
             }
