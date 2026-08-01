@@ -401,6 +401,11 @@ void RayTracingModule::initExecutionVariables() {
     if (shaderPack_ == nullptr) { return; }
     shaderPack_->copyStageExecutionState(ShaderPackLoader::Stage::RayTracing, executionVariableConfigs_,
                                          globalVariables_);
+    // Black-atmosphere timeline: each reset re-seeds VPT_TRANS_LUT_READY to its (false) default, which re-arms
+    // the run-once trans_lut pass. If this does NOT fire on a pipeline/image recreate, the transLUT image is
+    // recreated empty while the flag stays true -> permanent black atmosphere (see [AtmosPass] in executePass).
+    std::cerr << "[AtmosPass] initExecutionVariables: globalVariables_ reset (VPT_TRANS_LUT_READY re-armed)"
+              << std::endl;
 }
 
 std::vector<ExpressionEvaluator::Variable> RayTracingModule::executionExpressionVariables() const {
@@ -1936,6 +1941,23 @@ void RayTracingModuleContext::render() {
                           });
     }
 
+    // Black-atmosphere diagnostic (2026-08-01): world is unlit (direct+indirect+sky ALL black) with a correct
+    // textured albedo. transLUT feeds BOTH sun radiance (shadow.rmiss) AND the sky cube (sky_cube.frag samples
+    // transLUT), so an empty transLUT zeroes all lighting at once. trans_lut is a RUN-ONCE pass gated on
+    // VPT_TRANS_LUT_READY; if a pipeline recreate swaps the transLUT image while the flag persists true, it is
+    // never refilled -> permanent black atmosphere. RADIANCE_DEBUG_FORCE_TRANSLUT resets the flag to its
+    // startup default every frame so trans_lut re-runs each frame: if the world lights up, the run-once-skip
+    // IS the bug (real fix = reset the flag when the pipeline/images are recreated).
+    if (std::getenv("RADIANCE_DEBUG_FORCE_TRANSLUT") != nullptr) {
+        auto readyIt = variables.find("VPT_TRANS_LUT_READY");
+        auto readyCfg = module->findExecutionVariableConfig("VPT_TRANS_LUT_READY");
+        if (readyIt != variables.end() && readyCfg.has_value()) {
+            readyIt->second.value = readyCfg->get().defaultValue;
+        }
+    }
+    static long long g_rtRenderFrame = 0;
+    long long rtFrame = g_rtRenderFrame++;
+
     if (module->hasSharcRuntime_ && module->isSharcEnabled_ && module->sharcUpdatePass_ != nullptr) {
         auto &updateVariables = variables;
         if (module->sharcUpdatePass_->executionBuffer != nullptr) {
@@ -1950,6 +1972,17 @@ void RayTracingModuleContext::render() {
     }
 
     auto executePass = [&](const std::string &passName, ShaderPack::ExecutionVariables &passVariables) {
+        // Black-atmosphere timeline: log every trans_lut run (should be rare/once) and periodic sky_cube runs.
+        // If trans_lut runs once early then stops while sky_cube keeps running every frame, the transLUT image
+        // is stale/empty after a recreate (run-once-skip). Correlate with [AtmosPass] initExecutionVariables.
+        if (passName == "trans_lut" || passName == "sky_cube") {
+            static long long transLutRuns = 0, skyCubeRuns = 0;
+            if (passName == "trans_lut") { ++transLutRuns; } else { ++skyCubeRuns; }
+            if (passName == "trans_lut" || skyCubeRuns <= 3 || (skyCubeRuns % 300) == 0) {
+                std::cerr << "[AtmosPass] frame=" << rtFrame << " ran=" << passName
+                          << " transLutRuns=" << transLutRuns << " skyCubeRuns=" << skyCubeRuns << std::endl;
+            }
+        }
         auto passIter = module->passNameToPass_.find(passName);
         if (passIter == module->passNameToPass_.end()) { throw std::runtime_error("unknown pass: " + passName); }
 
