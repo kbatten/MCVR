@@ -1141,21 +1141,6 @@ void main() {
         mainRay.radiance = heat;
     }
 #    endif
-    // Diagnostics: output the surface's debug value (albedoValue.rgb, which the hit shaders overwrite for
-    // RADIANCE_DEBUG_ALBEDO/UV/TEXID) instead of shaded radiance, to investigate the black terrain. Output
-    // rgb WITHOUT the alpha multiply so UV/TEXID stay visible on surfaces whose (empty) texture alpha is 0.
-    // Sky keeps its radiance. NOTE: cutout terrain with sampled alpha 0 is still discarded by the anyhit
-    // before this runs (it shows sky through); opaque/solid surfaces show the debug value.
-#if defined(RADIANCE_DEBUG_ALBEDO) || defined(RADIANCE_DEBUG_UV) || defined(RADIANCE_DEBUG_TEXID)
-    if (!hitSky) { mainRay.radiance = firstHitMat.albedoValue.rgb; }
-#endif
-    // Shader-deployment / hit-path test: paint every non-sky hit solid green, independent of all surface
-    // data. Green terrain+mobs => the vanilla-pt shader pack IS redeploying and the closest-hit runs (so the
-    // other RADIANCE_DEBUG_* probes are meaningful and their black means the real bug); still black => the
-    // shader pack is stale (build not re-zipping/redeploying it) and every prior shader-probe result was moot.
-#ifdef RADIANCE_DEBUG_GREEN
-    if (!hitSky) { mainRay.radiance = vec3(0.0, 1.0, 0.0); }
-#endif
     imageStore(outputImage, ivec2(pixel), vec4(mainRay.radiance, 1.0));
 #endif
 }

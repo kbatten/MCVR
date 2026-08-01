@@ -14,16 +14,6 @@
 #include <limits>
 #include <stdexcept>
 
-// TEMP diagnostic (world renders black: chunksWithBLAS=0). Chunk1::enqueue applies a built BLAS only when
-// chunkBuildData->version > blasVersion; these count how often it applies vs discards, and how often
-// invalidate() nulls a chunk's BLAS. All chunk version ops run under Chunks::mutex_, so plain counters are
-// safe. Strip with the rest of the [World]/[Chunks] scaffolding. External linkage so world_prepare.cpp can
-// print them from its always-running probe (the discard-only log below never fired, so the counts must be
-// surfaced unconditionally to tell "enqueue never called" from "applies then gets nulled").
-long long g_enqApplied = 0;
-long long g_enqDiscarded = 0;
-long long g_chunkInvalidated = 0;
-
 struct LightData {
     glm::vec4 p0Area;
     glm::vec4 p1;
@@ -46,42 +36,7 @@ static void buildChunkPackedVertices(const std::vector<std::vector<vk::VertexFor
 
         packedIndices.insert(packedIndices.end(), geometryIndices.begin(), geometryIndices.end());
 
-        // Black-terrain diagnostic (2026-07-30): terrain chunk BLAS ARE built + in the TLAS (chunksWithBLAS
-        // ~4235) yet terrain is not HIT (blank in normal/depth G-buffers) while entities are. A BLAS is built
-        // from POSITIONS + INDICES only -- never verified (only textureID/uv/color were). Log the actual first
-        // triangle the BLAS will use: index triple, the 3 positions, and area. Section-relative pos should be
-        // ~[0,16] with nonzero area. Zero/collapsed/huge/NaN pos or ~0 area => degenerate chunk geometry (the
-        // capture feeds bad positions/indices) = why rays pass through terrain.
-        static int radianceChunkGeoDbg = 0;
-        if (radianceChunkGeoDbg < 8 && geometryVertices.size() >= 3 && geometryIndices.size() >= 3) {
-            uint32_t i0 = geometryIndices[0], i1 = geometryIndices[1], i2 = geometryIndices[2];
-            if (i0 < geometryVertices.size() && i1 < geometryVertices.size() && i2 < geometryVertices.size()) {
-                radianceChunkGeoDbg++;
-                const auto &p0 = geometryVertices[i0].pos;
-                const auto &p1 = geometryVertices[i1].pos;
-                const auto &p2 = geometryVertices[i2].pos;
-                float area = 0.5f * glm::length(glm::cross(glm::vec3(p1) - glm::vec3(p0), glm::vec3(p2) - glm::vec3(p0)));
-                std::cerr << "[ChunkGeo] verts=" << geometryVertices.size() << " idx=" << geometryIndices.size()
-                          << " tri0 i=(" << i0 << "," << i1 << "," << i2 << ")"
-                          << " p0=(" << p0.x << "," << p0.y << "," << p0.z << ")"
-                          << " p1=(" << p1.x << "," << p1.y << "," << p1.z << ")"
-                          << " p2=(" << p2.x << "," << p2.y << "," << p2.z << ")"
-                          << " area=" << area << std::endl;
-            }
-        }
-
         for (const auto &vertex : geometryVertices) {
-            // Black-terrain diagnostic: log the first few CHUNK (terrain) vertices specifically. The generic
-            // [MatDbg] in makeMaterialVertex can be hit by entities first. Terrain should have textureID = the
-            // block atlas glId (29) and atlas-space UVs; textureID=5 / small UVs would mean the terrain
-            // consumer is feeding a wrong (small) texture.
-            static int radianceChunkMatDbg = 0;
-            if (radianceChunkMatDbg < 12 && vertex.useTexture > 0) {
-                radianceChunkMatDbg++;
-                std::cerr << "[MatDbgChunk] textureID=" << vertex.textureID << " uv=(" << vertex.textureUV.x << ", "
-                          << vertex.textureUV.y << ") color=(" << vertex.colorLayer.x << "," << vertex.colorLayer.y
-                          << "," << vertex.colorLayer.z << ")" << std::endl;
-            }
             packedPositions.push_back(vk::Vertex::makePositionVertex(vertex));
             packedMaterials.push_back(vk::Vertex::makeMaterialVertex(vertex));
         }
@@ -1127,7 +1082,6 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
     lastUpdate = std::chrono::steady_clock::now();
 
     if (chunkBuildData->version > blasVersion) {
-        g_enqApplied++;
         blasVersion = chunkBuildData->version;
         x = chunkBuildData->x;
         y = chunkBuildData->y;
@@ -1135,13 +1089,6 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
 
         frr.retain(blas);
         blas = chunkBuildData->blas;
-        if (chunkBuildData->blas == nullptr) {
-            static long long nullBlasThrottle = 0;
-            if ((nullBlasThrottle++ % 500) == 0) {
-                std::cerr << "[Chunks] enqueue applied but chunkBuildData->blas is NULL (geometryCount="
-                          << chunkBuildData->geometryCount << ")" << std::endl;
-            }
-        }
 
         frr.retain(indexBufferAddresses);
         indexBufferAddresses =
@@ -1177,13 +1124,6 @@ bool Chunk1::enqueue(std::shared_ptr<ChunkBuildData> chunkBuildData) {
         geometryGroupNames = std::make_shared<std::vector<std::string>>(std::move(chunkBuildData->geometryGroupNames));
         return true;
     } else {
-        g_enqDiscarded++;
-        static long long discardThrottle = 0;
-        if ((discardThrottle++ % 500) == 0) {
-            std::cerr << "[Chunks] enqueue: version=" << chunkBuildData->version << " <= blasVersion=" << blasVersion
-                      << " -> DISCARD (applied=" << g_enqApplied << " discarded=" << g_enqDiscarded
-                      << " invalidated=" << g_chunkInvalidated << ")" << std::endl;
-        }
         frr.retain(chunkBuildData->blas);
         frr.retain(chunkBuildData->indexBuffer);
         frr.retain(chunkBuildData->positionBuffer);
@@ -1199,7 +1139,6 @@ void Chunk1::invalidate() {
 
     lastUpdate = std::chrono::steady_clock::now();
 
-    g_chunkInvalidated++;
     blasVersion = latestVersion++;
 
     frr.retain(blas);
@@ -1444,12 +1383,6 @@ void Chunks::invalidateChunk(int id) {
     std::unique_lock<std::recursive_mutex> lock(mutex_);
     if (id < 0 || static_cast<size_t>(id) >= chunks_.size()) {
         // Same transient out-of-range window as relocateChunk during a render-distance increase.
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            std::cerr << "[Chunks] SKIP invalidateChunk: id " << id << " out of range (size=" << chunks_.size()
-                      << ")" << std::endl;
-        }
         return;
     }
     auto framework = Renderer::instance().framework();
@@ -1473,12 +1406,6 @@ void Chunks::relocateChunk(int id, int x, int y, int z) {
         // render-distance increase id can momentarily exceed the current size. Skip rather than index
         // out of bounds; reset() recreates every chunk and the section is repositioned afterward, the
         // same path first world load already takes (its construction-time relocates are skipped too).
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
-            std::cerr << "[Chunks] SKIP relocateChunk: id " << id << " out of range (size=" << chunks_.size()
-                      << ")" << std::endl;
-        }
         return;
     }
     auto framework = Renderer::instance().framework();

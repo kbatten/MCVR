@@ -60,19 +60,6 @@ WorldPipelineBlueprint::WorldPipelineBlueprint(WorldPipelineBuildParams *params)
 
 WorldPipeline::WorldPipeline() {}
 
-void WorldPipeline::dumpSharedImages(const char *label) const {
-    std::cerr << label << std::endl;
-    for (size_t frameIndex = 0; frameIndex < sharedImages_.size(); frameIndex++) {
-        for (size_t idx = 0; idx < sharedImages_[frameIndex].size(); idx++) {
-            auto &img = sharedImages_[frameIndex][idx];
-            if (!img) continue;
-            std::cerr << "  frame=" << frameIndex << " idx=" << idx << " size=" << img->width() << "x" << img->height()
-                      << " fmt=" << img->vkFormat() << " image=0x" << std::hex << (uint64_t)img->vkImage() << std::dec
-                      << std::endl;
-        }
-    }
-}
-
 void WorldPipeline::init(std::shared_ptr<Framework> framework, std::shared_ptr<Pipeline> pipeline) {
     auto blueprint = pipeline->worldPipelineBlueprint();
     uint32_t frameNum = framework->swapchain()->imageCount();
@@ -233,14 +220,6 @@ void WorldPipelineContext::render() {
                                                         .subresourceRange = vk::wholeColorSubresourceRange,
                                                     }});
         outputImage->imageLayout() = targetLayout;
-    }
-
-    // TEMP diagnostic (world renders black): if the module graph is empty, nothing writes outputImage and
-    // the composited world is black. One-time so it does not flood the native log.
-    static bool loggedModuleCount = false;
-    if (!loggedModuleCount) {
-        loggedModuleCount = true;
-        std::cerr << "[World] render(): worldModuleContexts=" << worldModuleContexts.size() << std::endl;
     }
 
     for (int i = 0; i < worldModuleContexts.size(); i++) { worldModuleContexts[i]->render(); }

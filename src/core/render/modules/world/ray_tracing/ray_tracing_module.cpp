@@ -36,26 +36,6 @@ RayTracingModule::createShader(std::shared_ptr<vk::Device> device,
                                const std::unordered_map<std::string, std::string> &definitions,
                                const std::vector<std::string> &includeDirectories,
                                const std::string &injectedSource) {
-    // Diagnostics: these env vars inject a shader #define (only the world hit/rgen shaders have the matching
-    // #ifdef) to visualize surface data for the black-terrain investigation, env-gated at startup like the
-    // other RADIANCE_DEBUG_* flags:
-    //   RADIANCE_DEBUG_ALBEDO -> raw texture-sample albedo (isolate zero texture vs zero vertex color).
-    //   RADIANCE_DEBUG_UV     -> sampled UV as color (is it a sane 0..1 gradient?).
-    //   RADIANCE_DEBUG_TEXID  -> hash-color of the surface textureID (0 -> black; sane ids -> distinct).
-    static const char *kDebugDefines[] = {"RADIANCE_DEBUG_ALBEDO", "RADIANCE_DEBUG_UV", "RADIANCE_DEBUG_TEXID",
-                                          "RADIANCE_DEBUG_GREEN"};
-    std::unordered_map<std::string, std::string> debugDefinitions = definitions;
-    bool anyDebug = false;
-    for (const char *name : kDebugDefines) {
-        if (std::getenv(name) != nullptr) {
-            debugDefinitions[name] = "1";
-            anyDebug = true;
-        }
-    }
-    if (anyDebug) {
-        return vk::Shader::create(device, path.string(), stage, debugDefinitions, includeDirectories,
-                                  injectedSource);
-    }
     return vk::Shader::create(device, path.string(), stage, definitions, includeDirectories, injectedSource);
 }
 
@@ -401,11 +381,6 @@ void RayTracingModule::initExecutionVariables() {
     if (shaderPack_ == nullptr) { return; }
     shaderPack_->copyStageExecutionState(ShaderPackLoader::Stage::RayTracing, executionVariableConfigs_,
                                          globalVariables_);
-    // Black-atmosphere timeline: each reset re-seeds VPT_TRANS_LUT_READY to its (false) default, which re-arms
-    // the run-once trans_lut pass. If this does NOT fire on a pipeline/image recreate, the transLUT image is
-    // recreated empty while the flag stays true -> permanent black atmosphere (see [AtmosPass] in executePass).
-    std::cerr << "[AtmosPass] initExecutionVariables: globalVariables_ reset (VPT_TRANS_LUT_READY re-armed)"
-              << std::endl;
 }
 
 std::vector<ExpressionEvaluator::Variable> RayTracingModule::executionExpressionVariables() const {
@@ -718,13 +693,6 @@ std::shared_ptr<vk::DeviceLocalImage> RayTracingModule::findRuntimeVKTexture(Sha
 std::shared_ptr<vk::DeviceLocalBuffer> RayTracingModule::findRuntimeVKBuffer(ShaderPack::RuntimeBuffer &runtimeBuffer,
                                                                              uint32_t frameIndex) {
     return shaderPack_->findRuntimeVKBuffer(runtimeBuffer, frameIndex);
-}
-
-std::shared_ptr<vk::DeviceLocalImage> RayTracingModule::debugRuntimeTextureImage(const std::string &name) {
-    auto runtimeTexture = findRuntimeTexture(name);
-    if (!runtimeTexture.has_value()) { return nullptr; }
-    // trans_lut is shared, so frameIndex is ignored (findRuntimeVKTexture returns frameImages[0]).
-    return findRuntimeVKTexture(runtimeTexture->get(), 0);
 }
 
 std::shared_ptr<vk::DeviceLocalImage> RayTracingModule::findTargetImage(const std::string &target,
@@ -1382,16 +1350,7 @@ void RayTracingModule::renderRayTracingPass(
     auto worldCommandBuffer = frameworkContext->worldCommandBuffer;
     uint32_t frameIndex = frameworkContext->frameIndex;
 
-    if (context.worldPrepareContext->tlas == nullptr) {
-        // TEMP diagnostic (world renders black even with a full TLAS): confirm whether the trace pass
-        // is being skipped because the TLAS is null at dispatch time. One-time so it does not flood.
-        static bool warnedNullTlas = false;
-        if (!warnedNullTlas) {
-            warnedNullTlas = true;
-            std::cerr << "[RT] SKIP trace pass=" << pass.config.name << ": tlas==null at dispatch" << std::endl;
-        }
-        return;
-    }
+    if (context.worldPrepareContext->tlas == nullptr) { return; }
 
     context.worldPrepareContext->setupHitGroupSbt(
         pass.hitGroupNameToIndex, pass.fallbackHitGroupIndex, pass.shadowHitGroupIndex, worldCommandBuffer,
@@ -1427,15 +1386,6 @@ void RayTracingModule::renderRayTracingPass(
             .dstStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
             .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
         }});
-    }
-
-    // TEMP diagnostic (world renders black even with a full TLAS): confirm the trace actually
-    // dispatches and at what resolution. One-time per pass name so it does not flood; degenerate dims
-    // (0/1) or a pass that never appears here point straight at the empty output.
-    static std::set<std::string> loggedTraceDispatch;
-    if (loggedTraceDispatch.insert(pass.config.name).second) {
-        std::cerr << "[RT] trace dispatch pass=" << pass.config.name << " " << traceWidth << "x" << traceHeight
-                  << "x" << traceDepth << std::endl;
     }
 
     worldCommandBuffer->bindDescriptorTable(context.rayTracingDescriptorTable, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR)
@@ -1849,16 +1799,6 @@ void RayTracingModule::bindTexture(std::shared_ptr<vk::Sampler> sampler,
     auto framework = framework_.lock();
 
     uint32_t size = framework->swapchain()->imageCount();
-    // Black-terrain diagnostic (reliable, native): the block atlas is glId 29 = 4096x2048, re-initialized
-    // several times. If the world RT textures[] descriptor at slot 29 is left as a stale small image (a bind
-    // skipped because the RT descriptor tables did not exist yet, and never re-bound to the final atlas), the
-    // RT samples empty -> 0 albedo -> black. Log every atlas-sized (>=1024 wide) bind: which index, the image
-    // dims, and whether the RT descriptor table existed (tableNull=1 => this bind was SKIPPED for the RT).
-    if (image != nullptr && image->width() >= 1024) {
-        bool tableNull = (size == 0) || (rayTracingDescriptorTables_[0] == nullptr);
-        std::cerr << "[RTBind] index=" << index << " " << image->width() << "x" << image->height()
-                  << " tableNull=" << (tableNull ? 1 : 0) << std::endl;
-    }
     for (uint32_t i = 0; i < size; i++) {
         if (rayTracingDescriptorTables_[i] != nullptr) {
             rayTracingDescriptorTables_[i]->bindSamplerImage(sampler, image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -1948,23 +1888,6 @@ void RayTracingModuleContext::render() {
                           });
     }
 
-    // Black-atmosphere diagnostic (2026-08-01): world is unlit (direct+indirect+sky ALL black) with a correct
-    // textured albedo. transLUT feeds BOTH sun radiance (shadow.rmiss) AND the sky cube (sky_cube.frag samples
-    // transLUT), so an empty transLUT zeroes all lighting at once. trans_lut is a RUN-ONCE pass gated on
-    // VPT_TRANS_LUT_READY; if a pipeline recreate swaps the transLUT image while the flag persists true, it is
-    // never refilled -> permanent black atmosphere. RADIANCE_DEBUG_FORCE_TRANSLUT resets the flag to its
-    // startup default every frame so trans_lut re-runs each frame: if the world lights up, the run-once-skip
-    // IS the bug (real fix = reset the flag when the pipeline/images are recreated).
-    if (std::getenv("RADIANCE_DEBUG_FORCE_TRANSLUT") != nullptr) {
-        auto readyIt = variables.find("VPT_TRANS_LUT_READY");
-        auto readyCfg = module->findExecutionVariableConfig("VPT_TRANS_LUT_READY");
-        if (readyIt != variables.end() && readyCfg.has_value()) {
-            readyIt->second.value = readyCfg->get().defaultValue;
-        }
-    }
-    static long long g_rtRenderFrame = 0;
-    long long rtFrame = g_rtRenderFrame++;
-
     if (module->hasSharcRuntime_ && module->isSharcEnabled_ && module->sharcUpdatePass_ != nullptr) {
         auto &updateVariables = variables;
         if (module->sharcUpdatePass_->executionBuffer != nullptr) {
@@ -1979,17 +1902,6 @@ void RayTracingModuleContext::render() {
     }
 
     auto executePass = [&](const std::string &passName, ShaderPack::ExecutionVariables &passVariables) {
-        // Black-atmosphere timeline: log every trans_lut run (should be rare/once) and periodic sky_cube runs.
-        // If trans_lut runs once early then stops while sky_cube keeps running every frame, the transLUT image
-        // is stale/empty after a recreate (run-once-skip). Correlate with [AtmosPass] initExecutionVariables.
-        if (passName == "trans_lut" || passName == "sky_cube") {
-            static long long transLutRuns = 0, skyCubeRuns = 0;
-            if (passName == "trans_lut") { ++transLutRuns; } else { ++skyCubeRuns; }
-            if (passName == "trans_lut" || skyCubeRuns <= 3 || (skyCubeRuns % 300) == 0) {
-                std::cerr << "[AtmosPass] frame=" << rtFrame << " ran=" << passName
-                          << " transLutRuns=" << transLutRuns << " skyCubeRuns=" << skyCubeRuns << std::endl;
-            }
-        }
         auto passIter = module->passNameToPass_.find(passName);
         if (passIter == module->passNameToPass_.end()) { throw std::runtime_error("unknown pass: " + passName); }
 

@@ -65,8 +65,6 @@ class WorldPipeline : public SharedObject<WorldPipeline> {
     void bindTexture(std::shared_ptr<vk::Sampler> sampler, std::shared_ptr<vk::DeviceLocalImage> image, int index);
 
   private:
-    void dumpSharedImages(const char *label) const;
-
     std::vector<std::shared_ptr<WorldModule>> worldModules_;
     std::vector<std::vector<std::shared_ptr<vk::DeviceLocalImage>>> sharedImages_;
     std::shared_ptr<ShaderPack> shaderPack_;
