@@ -10,6 +10,7 @@
 #include "core/render/textures.hpp"
 #include "core/render/world.hpp"
 
+#include <atomic>
 #include <cstdlib>
 #include <deque>
 #include <iostream>
@@ -665,6 +666,11 @@ FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framewor
 
 void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
+
+    // Crash diagnostic (2026-08-02): stamp the render thread so vk::BLAS::~BLAS can flag a live-TLAS BLAS
+    // destroyed off it (escaping this render-thread retainer).
+    extern std::atomic<std::thread::id> g_radianceRenderThreadId;
+    g_radianceRenderThreadId.store(std::this_thread::get_id());
 
     currentFrameIndex_ = frameIndex;
 
