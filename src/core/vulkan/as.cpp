@@ -5,7 +5,16 @@
 #include "core/vulkan/physical_device.hpp"
 #include "core/vulkan/vma.hpp"
 
+#include <atomic>
 #include <iostream>
+#include <sstream>
+#include <thread>
+
+// Crash diagnostic (2026-08-01): GPU-AV proved the per-frame TLAS build references chunk BLAS whose backing
+// buffer was already destroyed mid-flight (VUID-...-pInfos-12281). The FrameResourceRetainer frees retained
+// resources on the RENDER thread (beginFrame). A BLAS freed on ANOTHER thread escaped the retainer -- a race
+// with MC's chunk-lifecycle calls -- which is the use-after-free source. beginFrame stamps this each frame.
+std::atomic<std::thread::id> g_radianceRenderThreadId{};
 
 vk::BLAS::BLAS(std::shared_ptr<Device> device,
                VkAccelerationStructureKHR blas,
@@ -18,6 +27,17 @@ vk::BLAS::BLAS(std::shared_ptr<Device> device,
 }
 
 vk::BLAS::~BLAS() {
+    // Log any BLAS destroyed OFF the render thread (escaped the retainer). Match buf=0x... against the
+    // GPU-AV-named VkBuffer to confirm the mid-flight free. Some off-thread frees are benign (a stale
+    // ChunkBuildData discarded on a worker whose BLAS never entered the TLAS) -- grep the GPU-AV buffer.
+    auto renderThread = g_radianceRenderThreadId.load();
+    if (renderThread != std::thread::id{} && std::this_thread::get_id() != renderThread) {
+        std::ostringstream threadName;
+        threadName << std::this_thread::get_id();
+        uint64_t bufHandle = blasBuffer_ != nullptr ? (uint64_t)blasBuffer_->vkBuffer() : 0;
+        std::cerr << "[BLASLife] BLAS destroyed OFF render thread: AS=0x" << std::hex << (uint64_t)blas_ << " buf=0x"
+                  << bufHandle << std::dec << " thread=" << threadName.str() << std::endl;
+    }
     vkDestroyAccelerationStructureKHR(device_->vkDevice(), blas_, nullptr);
 }
 

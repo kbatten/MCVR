@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <random>
+#include <atomic>
 #include <thread>
 
 std::ostream &renderFrameworkCout() {
@@ -664,6 +665,11 @@ FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framewor
 
 void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
+
+    // Crash diagnostic (2026-08-01): stamp the render thread so vk::BLAS::~BLAS can flag any chunk BLAS freed
+    // off it (escaping this retainer) -- the suspected source of the mid-flight TLAS-referenced-BLAS free.
+    extern std::atomic<std::thread::id> g_radianceRenderThreadId;
+    g_radianceRenderThreadId.store(std::this_thread::get_id());
 
     currentFrameIndex_ = frameIndex;
     retainedResourcesByFrame_[currentFrameIndex_].clear();
