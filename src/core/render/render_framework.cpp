@@ -678,7 +678,10 @@ void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     static const int retainExtra = [] {
         const char *e = std::getenv("RADIANCE_DEBUG_RETAIN_EXTRA");
         int v = e != nullptr ? std::atoi(e) : 0;
-        return v > 0 ? v : 0;
+        v = v > 0 ? v : 0;
+        std::cerr << "[RetainExtra] RADIANCE_DEBUG_RETAIN_EXTRA=" << v << (v > 0 ? " (ACTIVE)" : " (off)")
+                  << std::endl;
+        return v;
     }();
     if (retainExtra > 0) {
         static std::deque<std::vector<std::shared_ptr<void>>> quarantine;
