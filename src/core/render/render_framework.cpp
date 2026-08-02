@@ -11,9 +11,9 @@
 #include "core/render/world.hpp"
 
 #include <cstdlib>
+#include <deque>
 #include <iostream>
 #include <random>
-#include <atomic>
 #include <thread>
 
 std::ostream &renderFrameworkCout() {
@@ -666,12 +666,28 @@ FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framewor
 void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
 
-    // Crash diagnostic (2026-08-01): stamp the render thread so vk::BLAS::~BLAS can flag any chunk BLAS freed
-    // off it (escaping this retainer) -- the suspected source of the mid-flight TLAS-referenced-BLAS free.
-    extern std::atomic<std::thread::id> g_radianceRenderThreadId;
-    g_radianceRenderThreadId.store(std::this_thread::get_id());
-
     currentFrameIndex_ = frameIndex;
+
+    // Crash diagnostic (2026-08-02): GPU-AV VUID-12281 proved chunk BLAS backing buffers are freed before the
+    // TLAS build that references them executes, during chunk churn. The per-frame retention LOOKS correct, so
+    // this env-gated experiment decides retainer-freed-too-early vs an external free that bypasses the retainer:
+    // RADIANCE_DEBUG_RETAIN_EXTRA=N holds each cleared bucket's resources for N EXTRA beginFrame cycles (bounded
+    // quarantine -> memory-safe, no unbounded leak). Crash GONE with N set => the retainer frees a cycle too
+    // early (fix the retention). Crash PERSISTS => the free is an external path (Chunks::reset/releaseAll/async
+    // queue), and the retainer is not the culprit.
+    static const int retainExtra = [] {
+        const char *e = std::getenv("RADIANCE_DEBUG_RETAIN_EXTRA");
+        int v = e != nullptr ? std::atoi(e) : 0;
+        return v > 0 ? v : 0;
+    }();
+    if (retainExtra > 0) {
+        static std::deque<std::vector<std::shared_ptr<void>>> quarantine;
+        quarantine.push_back(std::move(retainedResourcesByFrame_[currentFrameIndex_]));
+        retainedResourcesByFrame_[currentFrameIndex_].clear();
+        while (static_cast<int>(quarantine.size()) > retainExtra) { quarantine.pop_front(); }
+        return;
+    }
+
     retainedResourcesByFrame_[currentFrameIndex_].clear();
 }
 
