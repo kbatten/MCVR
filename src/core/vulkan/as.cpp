@@ -41,6 +41,14 @@ void radianceClearInFlightBlas(uint32_t frameIndex) {
 
 void radianceRegisterTlasBlas(uint32_t frameIndex, std::vector<const void *> &&blasPtrs) {
     std::lock_guard<std::mutex> lk(g_inFlightMtx);
+    // Confirm the probe is actually armed (world_prepare built a TLAS). If [BLASLife] never fires but this
+    // also never logs, the run crashed before any world render and the 0 is meaningless.
+    static long long registerCalls = 0;
+    if (registerCalls == 0 || (registerCalls % 600) == 0) {
+        std::cerr << "[BLASLife] probe armed: TLAS register #" << registerCalls << " frame=" << frameIndex
+                  << " instances=" << blasPtrs.size() << std::endl;
+    }
+    ++registerCalls;
     auto &cur = g_inFlightByFrame[frameIndex];
     dropFrameRefs(cur); // safety: should already be cleared by beginFrame
     cur = std::move(blasPtrs);
