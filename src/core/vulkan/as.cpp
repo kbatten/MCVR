@@ -5,55 +5,7 @@
 #include "core/vulkan/physical_device.hpp"
 #include "core/vulkan/vma.hpp"
 
-#include <atomic>
 #include <iostream>
-#include <mutex>
-#include <sstream>
-#include <thread>
-#include <unordered_map>
-#include <vector>
-
-// Crash diagnostic (2026-08-02): GPU-AV VUID-12281 -- the per-frame TLAS build references chunk BLAS whose
-// backing buffer was destroyed at GPU execution. A 4-frame-window probe over-fired (normal churn destroys
-// recently-TLAS'd BLAS constantly, safely, after their fence). This PRECISE version keeps a refcount of BLAS
-// referenced by frames that are SUBMITTED-but-not-yet-fence-complete (the true in-flight window): world_prepare
-// registers a frame's TLAS BLAS (keyed by swapchain frameIndex) during recording; beginFrame(frameIndex) clears
-// that frame's set AFTER acquireContext waited fence[frameIndex]. If vk::BLAS::~BLAS destroys a BLAS whose
-// in-flight refcount > 0, that is the genuine mid-flight free behind the crash -- rare, not churn noise.
-std::atomic<std::thread::id> g_radianceRenderThreadId{};
-static std::mutex g_inFlightMtx;
-static std::unordered_map<const void *, int> g_inFlightBlasRefs;
-static std::unordered_map<uint32_t, std::vector<const void *>> g_inFlightByFrame;
-
-static void dropFrameRefs(std::vector<const void *> &ptrs) {
-    for (auto p : ptrs) {
-        auto r = g_inFlightBlasRefs.find(p);
-        if (r != g_inFlightBlasRefs.end() && --r->second <= 0) { g_inFlightBlasRefs.erase(r); }
-    }
-    ptrs.clear();
-}
-
-void radianceClearInFlightBlas(uint32_t frameIndex) {
-    std::lock_guard<std::mutex> lk(g_inFlightMtx);
-    auto it = g_inFlightByFrame.find(frameIndex);
-    if (it != g_inFlightByFrame.end()) { dropFrameRefs(it->second); }
-}
-
-void radianceRegisterTlasBlas(uint32_t frameIndex, std::vector<const void *> &&blasPtrs) {
-    std::lock_guard<std::mutex> lk(g_inFlightMtx);
-    // Confirm the probe is actually armed (world_prepare built a TLAS). If [BLASLife] never fires but this
-    // also never logs, the run crashed before any world render and the 0 is meaningless.
-    static long long registerCalls = 0;
-    if (registerCalls == 0 || (registerCalls % 600) == 0) {
-        std::cerr << "[BLASLife] probe armed: TLAS register #" << registerCalls << " frame=" << frameIndex
-                  << " instances=" << blasPtrs.size() << std::endl;
-    }
-    ++registerCalls;
-    auto &cur = g_inFlightByFrame[frameIndex];
-    dropFrameRefs(cur); // safety: should already be cleared by beginFrame
-    cur = std::move(blasPtrs);
-    for (auto p : cur) { ++g_inFlightBlasRefs[p]; }
-}
 
 vk::BLAS::BLAS(std::shared_ptr<Device> device,
                VkAccelerationStructureKHR blas,
@@ -66,18 +18,6 @@ vk::BLAS::BLAS(std::shared_ptr<Device> device,
 }
 
 vk::BLAS::~BLAS() {
-    {
-        std::lock_guard<std::mutex> lk(g_inFlightMtx);
-        if (g_inFlightBlasRefs.count(this) > 0) {
-            bool offThread = std::this_thread::get_id() != g_radianceRenderThreadId.load();
-            std::ostringstream th;
-            th << std::this_thread::get_id();
-            uint64_t buf = blasBuffer_ != nullptr ? (uint64_t)blasBuffer_->vkBuffer() : 0;
-            std::cerr << "[BLASLife] IN-FLIGHT BLAS DESTROYED offThread=" << (offThread ? 1 : 0) << " as=0x"
-                      << std::hex << (uint64_t)blas_ << " buf=0x" << buf << std::dec << " thread=" << th.str()
-                      << std::endl;
-        }
-    }
     vkDestroyAccelerationStructureKHR(device_->vkDevice(), blas_, nullptr);
 }
 

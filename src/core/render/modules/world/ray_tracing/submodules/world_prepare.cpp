@@ -372,16 +372,6 @@ void WorldPrepareContext::render() {
         }
     }
 
-    // Crash diagnostic (2026-08-02): register the BLAS pointers this frame's TLAS references so
-    // vk::BLAS::~BLAS can flag any destroyed while still inside the in-flight TLAS window (the VUID-12281 free).
-    {
-        extern void radianceRegisterTlasBlas(uint32_t frameIndex, std::vector<const void *> && blasPtrs);
-        std::vector<const void *> blasPtrs;
-        blasPtrs.reserve(instanceBuilder.instances.size());
-        for (auto &inst : instanceBuilder.instances) { blasPtrs.push_back(std::get<5>(inst).get()); }
-        radianceRegisterTlasBlas(context->frameIndex, std::move(blasPtrs));
-    }
-
     if (instanceBuilder.instances.empty()) {
         tlas = nullptr;
         return;

@@ -10,9 +10,7 @@
 #include "core/render/textures.hpp"
 #include "core/render/world.hpp"
 
-#include <atomic>
 #include <cstdlib>
-#include <deque>
 #include <iostream>
 #include <random>
 #include <thread>
@@ -667,39 +665,7 @@ FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framewor
 void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
 
-    // Crash diagnostic (2026-08-02): stamp the render thread so vk::BLAS::~BLAS can flag an in-flight BLAS
-    // destroyed off it. Also drop this frame's in-flight TLAS-BLAS refs -- acquireContext already waited
-    // fence[frameIndex], so frame frameIndex's GPU work is complete and its BLAS are no longer in-flight.
-    extern std::atomic<std::thread::id> g_radianceRenderThreadId;
-    g_radianceRenderThreadId.store(std::this_thread::get_id());
-    extern void radianceClearInFlightBlas(uint32_t frameIndex);
-    radianceClearInFlightBlas(frameIndex);
-
     currentFrameIndex_ = frameIndex;
-
-    // Crash diagnostic (2026-08-02): GPU-AV VUID-12281 proved chunk BLAS backing buffers are freed before the
-    // TLAS build that references them executes, during chunk churn. The per-frame retention LOOKS correct, so
-    // this env-gated experiment decides retainer-freed-too-early vs an external free that bypasses the retainer:
-    // RADIANCE_DEBUG_RETAIN_EXTRA=N holds each cleared bucket's resources for N EXTRA beginFrame cycles (bounded
-    // quarantine -> memory-safe, no unbounded leak). Crash GONE with N set => the retainer frees a cycle too
-    // early (fix the retention). Crash PERSISTS => the free is an external path (Chunks::reset/releaseAll/async
-    // queue), and the retainer is not the culprit.
-    static const int retainExtra = [] {
-        const char *e = std::getenv("RADIANCE_DEBUG_RETAIN_EXTRA");
-        int v = e != nullptr ? std::atoi(e) : 0;
-        v = v > 0 ? v : 0;
-        std::cerr << "[RetainExtra] RADIANCE_DEBUG_RETAIN_EXTRA=" << v << (v > 0 ? " (ACTIVE)" : " (off)")
-                  << std::endl;
-        return v;
-    }();
-    if (retainExtra > 0) {
-        static std::deque<std::vector<std::shared_ptr<void>>> quarantine;
-        quarantine.push_back(std::move(retainedResourcesByFrame_[currentFrameIndex_]));
-        retainedResourcesByFrame_[currentFrameIndex_].clear();
-        while (static_cast<int>(quarantine.size()) > retainExtra) { quarantine.pop_front(); }
-        return;
-    }
-
     retainedResourcesByFrame_[currentFrameIndex_].clear();
 }
 

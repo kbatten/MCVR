@@ -1277,10 +1277,6 @@ void Chunks::reset(uint32_t numChunks,
 
     auto framework = Renderer::instance().framework();
     auto device = framework->device();
-    // Crash diagnostic (2026-08-02): chunks_.clear() below frees ALL chunk BLAS; if this fires close to the
-    // ~10s chunk-BLAS-in-TLAS crash (GPU-AV VUID-12281) it is the external free bypassing the per-frame
-    // retainer. vkQueueWaitIdle waits SUBMITTED work only -- not a recorded-but-unsubmitted current frame.
-    std::cerr << "[ChunksReset] numChunks=" << numChunks << " (was " << chunks_.size() << ")" << std::endl;
     vkQueueWaitIdle(device->mainVkQueue());
     vkQueueWaitIdle(device->secondaryQueue());
 
