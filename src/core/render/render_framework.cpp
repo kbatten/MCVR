@@ -667,10 +667,13 @@ FrameResourceRetainer::FrameResourceRetainer(std::shared_ptr<Framework> framewor
 void FrameResourceRetainer::beginFrame(uint32_t frameIndex) {
     std::unique_lock<std::recursive_mutex> lck(mtx_);
 
-    // Crash diagnostic (2026-08-02): stamp the render thread so vk::BLAS::~BLAS can flag a live-TLAS BLAS
-    // destroyed off it (escaping this render-thread retainer).
+    // Crash diagnostic (2026-08-02): stamp the render thread so vk::BLAS::~BLAS can flag an in-flight BLAS
+    // destroyed off it. Also drop this frame's in-flight TLAS-BLAS refs -- acquireContext already waited
+    // fence[frameIndex], so frame frameIndex's GPU work is complete and its BLAS are no longer in-flight.
     extern std::atomic<std::thread::id> g_radianceRenderThreadId;
     g_radianceRenderThreadId.store(std::this_thread::get_id());
+    extern void radianceClearInFlightBlas(uint32_t frameIndex);
+    radianceClearInFlightBlas(frameIndex);
 
     currentFrameIndex_ = frameIndex;
 

@@ -6,30 +6,45 @@
 #include "core/vulkan/vma.hpp"
 
 #include <atomic>
-#include <deque>
 #include <iostream>
 #include <mutex>
 #include <sstream>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
+#include <vector>
 
 // Crash diagnostic (2026-08-02): GPU-AV VUID-12281 -- the per-frame TLAS build references chunk BLAS whose
-// backing buffer was already destroyed at execution. Extending the render-thread retainer (RETAIN_EXTRA)
-// did NOT help, so either the BLAS is destroyed OFF the render thread (escaping the retainer) or its
-// reference is otherwise stale. Track the BLAS pointers referenced by the last few TLAS builds (the in-flight
-// window); if one of THOSE is destroyed, that is the mid-flight free -- log it + whether it was off the
-// render thread. beginFrame stamps the render thread; world_prepare registers each frame's TLAS BLAS.
+// backing buffer was destroyed at GPU execution. A 4-frame-window probe over-fired (normal churn destroys
+// recently-TLAS'd BLAS constantly, safely, after their fence). This PRECISE version keeps a refcount of BLAS
+// referenced by frames that are SUBMITTED-but-not-yet-fence-complete (the true in-flight window): world_prepare
+// registers a frame's TLAS BLAS (keyed by swapchain frameIndex) during recording; beginFrame(frameIndex) clears
+// that frame's set AFTER acquireContext waited fence[frameIndex]. If vk::BLAS::~BLAS destroys a BLAS whose
+// in-flight refcount > 0, that is the genuine mid-flight free behind the crash -- rare, not churn noise.
 std::atomic<std::thread::id> g_radianceRenderThreadId{};
-static std::mutex g_tlasBlasMtx;
-static std::deque<std::unordered_set<const void *>> g_tlasBlasWindow;
-static std::unordered_set<const void *> g_tlasBlasLive;
+static std::mutex g_inFlightMtx;
+static std::unordered_map<const void *, int> g_inFlightBlasRefs;
+static std::unordered_map<uint32_t, std::vector<const void *>> g_inFlightByFrame;
 
-void radianceRegisterTlasBlas(std::vector<const void *> &&blasPtrs) {
-    std::lock_guard<std::mutex> lk(g_tlasBlasMtx);
-    g_tlasBlasWindow.emplace_back(blasPtrs.begin(), blasPtrs.end());
-    while (g_tlasBlasWindow.size() > 4) { g_tlasBlasWindow.pop_front(); }
-    g_tlasBlasLive.clear();
-    for (auto &s : g_tlasBlasWindow) { g_tlasBlasLive.insert(s.begin(), s.end()); }
+static void dropFrameRefs(std::vector<const void *> &ptrs) {
+    for (auto p : ptrs) {
+        auto r = g_inFlightBlasRefs.find(p);
+        if (r != g_inFlightBlasRefs.end() && --r->second <= 0) { g_inFlightBlasRefs.erase(r); }
+    }
+    ptrs.clear();
+}
+
+void radianceClearInFlightBlas(uint32_t frameIndex) {
+    std::lock_guard<std::mutex> lk(g_inFlightMtx);
+    auto it = g_inFlightByFrame.find(frameIndex);
+    if (it != g_inFlightByFrame.end()) { dropFrameRefs(it->second); }
+}
+
+void radianceRegisterTlasBlas(uint32_t frameIndex, std::vector<const void *> &&blasPtrs) {
+    std::lock_guard<std::mutex> lk(g_inFlightMtx);
+    auto &cur = g_inFlightByFrame[frameIndex];
+    dropFrameRefs(cur); // safety: should already be cleared by beginFrame
+    cur = std::move(blasPtrs);
+    for (auto p : cur) { ++g_inFlightBlasRefs[p]; }
 }
 
 vk::BLAS::BLAS(std::shared_ptr<Device> device,
@@ -44,13 +59,13 @@ vk::BLAS::BLAS(std::shared_ptr<Device> device,
 
 vk::BLAS::~BLAS() {
     {
-        std::lock_guard<std::mutex> lk(g_tlasBlasMtx);
-        if (g_tlasBlasLive.count(this) > 0) {
+        std::lock_guard<std::mutex> lk(g_inFlightMtx);
+        if (g_inFlightBlasRefs.count(this) > 0) {
             bool offThread = std::this_thread::get_id() != g_radianceRenderThreadId.load();
             std::ostringstream th;
             th << std::this_thread::get_id();
             uint64_t buf = blasBuffer_ != nullptr ? (uint64_t)blasBuffer_->vkBuffer() : 0;
-            std::cerr << "[BLASLife] LIVE-TLAS BLAS DESTROYED offThread=" << (offThread ? 1 : 0) << " as=0x"
+            std::cerr << "[BLASLife] IN-FLIGHT BLAS DESTROYED offThread=" << (offThread ? 1 : 0) << " as=0x"
                       << std::hex << (uint64_t)blas_ << " buf=0x" << buf << std::dec << " thread=" << th.str()
                       << std::endl;
         }
