@@ -9,6 +9,7 @@
 #include "core/render/world.hpp"
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -169,12 +170,24 @@ void WorldPrepareContext::render() {
 
     if (entities->blasBatchBuilder() != nullptr) { entities->blasBatchBuilder()->submit(worldCommandBuffer); }
 
-    // Sync-vs-data crash test (2026-08-04): RADIANCE_DEBUG_SYNC_TLAS drains ALL GPU work (device idle) right
-    // before the TLAS build. All code-level sync looks correct (same-queue chunk builds + AS-build barrier
-    // below, synced instance/address-array uploads), and use-after-free is ruled out -- yet the TLAS builds
-    // corrupt (11819 out-of-range instanceCustomIndex). If this full drain makes the crash vanish, there is a
-    // hidden sync/visibility gap despite the barriers; if it persists, it is data/driver corruption -> RenderDoc.
-    if (std::getenv("RADIANCE_DEBUG_SYNC_TLAS") != nullptr) { vkDeviceWaitIdle(device->vkDevice()); }
+    // Sync-vs-data crash test (2026-08-04): RADIANCE_DEBUG_SYNC_TLAS drains GPU work before the TLAS build.
+    // The full device idle (any value / "1") ELIMINATED the corrupt-TLAS crash (11819), proving a hidden
+    // sync/visibility gap despite the barriers looking correct. This narrows WHICH queue matters:
+    //   "secondary" -> vkQueueWaitIdle(secondaryQueue): the backend (GL-emulation texture/buffer upload) queue.
+    //                  If this alone fixes it, the gap is cross-queue (backend uploads -> main-queue trace, no
+    //                  semaphore) -> fix = a backend->render semaphore/barrier.
+    //   "main"      -> vkQueueWaitIdle(mainVkQueue): serializes prior main-queue work / overlapping frames.
+    //                  If this alone fixes it, the gap is same-queue cross-submission / frame overlap.
+    //   else ("1")  -> full vkDeviceWaitIdle (both; known to fix).
+    if (const char *syncMode = std::getenv("RADIANCE_DEBUG_SYNC_TLAS")) {
+        if (std::strcmp(syncMode, "secondary") == 0) {
+            vkQueueWaitIdle(device->secondaryQueue());
+        } else if (std::strcmp(syncMode, "main") == 0) {
+            vkQueueWaitIdle(device->mainVkQueue());
+        } else {
+            vkDeviceWaitIdle(device->vkDevice());
+        }
+    }
 
     worldCommandBuffer->barriersMemory({vk::CommandBuffer::MemoryBarrier{
         .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
