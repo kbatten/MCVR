@@ -795,17 +795,6 @@ ChunkBuildScheduler::ChunkBuildScheduler(std::set<int64_t> &queuedIndex,
     auto device = framework->device();
     auto physicalDevice = framework->physicalDevice();
     useSecondaryQueue_ = physicalDevice->mainQueueIndex() == physicalDevice->secondaryQueueIndex();
-    // Cross-queue-sync diagnostic (2026-08-03): chunk BLAS builds submit (no semaphore) to secondaryQueue when
-    // useSecondaryQueue_, else to mainVkQueue. secondaryQueue is ALWAYS a distinct VkQueue, so useSecondaryQueue_
-    // == 1 means chunk BLAS are built on a DIFFERENT queue than the render-queue TLAS build that reads them, with
-    // only a CPU fence (no semaphore / cross-queue barrier) -- a genuine sync gap producing corrupt TLAS refs
-    // (GPU-AV VUID-12281). == 0 => same queue as render, covered by the AS-build barrier in world_prepare.
-    std::cerr << "[QueueCfg] mainQueueIndex=" << physicalDevice->mainQueueIndex()
-              << " secondaryQueueIndex=" << physicalDevice->secondaryQueueIndex()
-              << " useSecondaryQueue=" << (useSecondaryQueue_ ? 1 : 0) << " -> chunk BLAS builds on "
-              << (useSecondaryQueue_ ? "SECONDARY (DISTINCT queue -> CROSS-QUEUE vs render TLAS, no semaphore!)"
-                                     : "MAIN (same queue as render, AS-barrier covers it)")
-              << std::endl;
     auto commandPool = useSecondaryQueue_ ? framework->asyncCommandPool() : framework->mainCommandPool();
 
     uint32_t numFences = chunkBuildingTotalBatches_;
