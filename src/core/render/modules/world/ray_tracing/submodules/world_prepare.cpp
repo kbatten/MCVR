@@ -8,6 +8,7 @@
 #include "core/render/renderer.hpp"
 #include "core/render/world.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
@@ -167,6 +168,13 @@ void WorldPrepareContext::render() {
     }
 
     if (entities->blasBatchBuilder() != nullptr) { entities->blasBatchBuilder()->submit(worldCommandBuffer); }
+
+    // Sync-vs-data crash test (2026-08-04): RADIANCE_DEBUG_SYNC_TLAS drains ALL GPU work (device idle) right
+    // before the TLAS build. All code-level sync looks correct (same-queue chunk builds + AS-build barrier
+    // below, synced instance/address-array uploads), and use-after-free is ruled out -- yet the TLAS builds
+    // corrupt (11819 out-of-range instanceCustomIndex). If this full drain makes the crash vanish, there is a
+    // hidden sync/visibility gap despite the barriers; if it persists, it is data/driver corruption -> RenderDoc.
+    if (std::getenv("RADIANCE_DEBUG_SYNC_TLAS") != nullptr) { vkDeviceWaitIdle(device->vkDevice()); }
 
     worldCommandBuffer->barriersMemory({vk::CommandBuffer::MemoryBarrier{
         .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
