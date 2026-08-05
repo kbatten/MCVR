@@ -170,18 +170,24 @@ void WorldPrepareContext::render() {
 
     if (entities->blasBatchBuilder() != nullptr) { entities->blasBatchBuilder()->submit(worldCommandBuffer); }
 
-    // Sync-vs-data crash test (2026-08-04): RADIANCE_DEBUG_SYNC_TLAS drains GPU work before the TLAS build.
-    // The full device idle (any value / "1") ELIMINATED the corrupt-TLAS crash (11819), proving a hidden
-    // sync/visibility gap despite the barriers looking correct. This narrows WHICH queue matters:
-    //   "secondary" -> vkQueueWaitIdle(secondaryQueue): the backend (GL-emulation texture/buffer upload) queue.
-    //                  If this alone fixes it, the gap is cross-queue (backend uploads -> main-queue trace, no
-    //                  semaphore) -> fix = a backend->render semaphore/barrier.
-    //   "main"      -> vkQueueWaitIdle(mainVkQueue): serializes prior main-queue work / overlapping frames.
-    //                  If this alone fixes it, the gap is same-queue cross-submission / frame overlap.
-    //   else ("1")  -> full vkDeviceWaitIdle (both; known to fix).
+    // Crash-repro narrowing (2026-08-04): RADIANCE_DEBUG_SYNC_TLAS forces extra sync before the TLAS build.
+    // The full device idle ELIMINATED the corrupt-TLAS crash (11819). ALL GPU work is on the main queue (the
+    // secondary queue is idle), so this is a single-queue timing/memory-visibility issue -- either a barrier
+    // whose scope misses a resource, or something needing actual completion. This mode splits those:
+    //   "barrier" -> a broad ALL_COMMANDS memory barrier (NO queue wait). If THIS alone fixes it, the bug is a
+    //                missing/too-narrow barrier scope (the AS-only barrier below misses e.g. the chunk geometry
+    //                buffers' TRANSFER writes -> RAY_TRACING_SHADER reads across submissions) -> cheap fix, no
+    //                stall. If it does NOT fix it but the waits do, it needs completion, not just a barrier.
+    //   "main"    -> vkQueueWaitIdle(mainVkQueue): actual completion of all prior main-queue work.
+    //   else      -> full vkDeviceWaitIdle.
     if (const char *syncMode = std::getenv("RADIANCE_DEBUG_SYNC_TLAS")) {
-        if (std::strcmp(syncMode, "secondary") == 0) {
-            vkQueueWaitIdle(device->secondaryQueue());
+        if (std::strcmp(syncMode, "barrier") == 0) {
+            worldCommandBuffer->barriersMemory({vk::CommandBuffer::MemoryBarrier{
+                .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+            }});
         } else if (std::strcmp(syncMode, "main") == 0) {
             vkQueueWaitIdle(device->mainVkQueue());
         } else {
