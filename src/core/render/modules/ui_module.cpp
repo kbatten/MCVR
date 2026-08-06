@@ -684,6 +684,9 @@ UIModule::RenderTargetResources &UIModule::acquireRenderTarget(uint32_t colorId,
                               .build(framework->device(), renderTargetRenderPass_);
         res.width = colorImage->width();
         res.height = colorImage->height();
+        // Fresh color + depth images: mirror MC's one-time whole-atlas clear on first use (see
+        // RenderTargetResources::needsInitialClear).
+        res.needsInitialClear = true;
     }
     return res;
 }
@@ -1753,6 +1756,29 @@ void UIModuleContext::beginTargetDraw(uint32_t colorId, int clearX, int clearY, 
         // LOAD_OP_LOAD ignores these; present to match the two-attachment render pass.
         .clearValues = {{.color = {0.0f, 0.0f, 0.0f, 0.0f}}, {.depthStencil = {.depth = 0.0f}}},
     });
+
+    // First use of this target: mirror MC's one-time whole-atlas clear (GuiItemAtlas ctor) that our
+    // separate native attachments never received -- color to transparent, depth to the reverse-Z far
+    // plane (0.0). Without the depth clear the GEQUAL item draws test against undefined depth and are
+    // rejected, leaving every newly-allocated slot empty. Cleared inside the pass (attachments LOAD), so
+    // it must be a vkCmdClearAttachments over the whole render area rather than a load-op clear.
+    if (res.needsInitialClear) {
+        VkClearAttachment initClears[2] = {};
+        initClears[0].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        initClears[0].colorAttachment = 0;
+        initClears[0].clearValue.color.float32[0] = 0.0f;
+        initClears[0].clearValue.color.float32[1] = 0.0f;
+        initClears[0].clearValue.color.float32[2] = 0.0f;
+        initClears[0].clearValue.color.float32[3] = 0.0f;
+        initClears[1].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        initClears[1].clearValue.depthStencil.depth = 0.0f;
+        VkClearRect fullRect{};
+        fullRect.rect = VkRect2D{.offset = {0, 0}, .extent = {colorImage->width(), colorImage->height()}};
+        fullRect.baseArrayLayer = 0;
+        fullRect.layerCount = 1;
+        vkCmdClearAttachments(cmd, 2, initClears, 1, &fullRect);
+        res.needsInitialClear = false;
+    }
 
     activeRenderTargetColorId_ = colorId;
     activeRenderTargetViewport_ = VkViewport{.x = 0.0f,

@@ -128,6 +128,13 @@ class UIModule : public SharedObject<UIModule> {
         std::shared_ptr<vk::Framebuffer> framebuffer;
         uint32_t width = 0;
         uint32_t height = 0;
+        // Our native color + depth attachments are separate images from MC's atlas textures, so MC's
+        // one-time whole-atlas clear (GuiItemAtlas ctor: color CLEAR_COLOR transparent, depth 0.0) never
+        // reaches them -- and VMA does not zero image memory. A newly-allocated (non-animated) atlas slot
+        // gets NO per-slot clear from MC, so it relies on that initial clear. Without it the depth is
+        // undefined and the reverse-Z GEQUAL item draws are rejected -> the slot renders nothing (empty
+        // icon). Cleared once, inside the first RTT pass for this target, then left to LOAD like MC's.
+        bool needsInitialClear = true;
     };
     std::shared_ptr<vk::RenderPass> renderTargetRenderPass_;
     std::map<uint32_t, RenderTargetResources> renderTargets_;
