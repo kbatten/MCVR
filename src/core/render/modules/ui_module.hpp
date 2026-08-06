@@ -118,6 +118,22 @@ class UIModule : public SharedObject<UIModule> {
     std::vector<std::shared_ptr<vk::DeviceLocalImage>> overlayDrawDepthStencilImages_;
     std::shared_ptr<vk::RenderPass> overlayDrawRenderPass_;
     std::vector<std::shared_ptr<vk::Framebuffer>> overlayDrawFramebuffers_;
+
+    // RTT (render-to-texture) support for off-screen render targets (GuiItemAtlas item icons). A single
+    // render pass compatible with overlayDrawRenderPass_ -- same RGBA8_UNORM color + D32_SFLOAT depth
+    // formats + subpass -- so the overlay pipelines render into it unchanged. Per color-target: an owned
+    // depth image + framebuffer, cached and recreated only if the color texture changes size.
+    struct RenderTargetResources {
+        std::shared_ptr<vk::DeviceLocalImage> depthImage;
+        std::shared_ptr<vk::Framebuffer> framebuffer;
+        uint32_t width = 0;
+        uint32_t height = 0;
+    };
+    std::shared_ptr<vk::RenderPass> renderTargetRenderPass_;
+    std::map<uint32_t, RenderTargetResources> renderTargets_;
+    void ensureRenderTargetRenderPass();
+    RenderTargetResources &acquireRenderTarget(uint32_t colorId,
+                                               std::shared_ptr<vk::DeviceLocalImage> colorImage);
     std::unordered_map<std::string, uint32_t> overlayDynamicDrawShaderIds_;
     std::vector<OverlayDynamicDrawShaderInfo> overlayDynamicDrawShaders_;
     std::unordered_map<int, OverlayTextureBinding> overlayTextureBindings_;
@@ -264,6 +280,32 @@ struct UIModuleContext : public SharedObject<UIModuleContext> {
                      uint32_t uniformOffset,
                      uint32_t indexCount,
                      VkIndexType indexType);
+
+    // RTT draw path (fix for corrupted GUI item icons). beginTargetDraw opens a render pass targeting the
+    // registered color texture `colorId` -- LOADing it to preserve already-cached atlas slots -- and
+    // replays the per-slot region clear + sets viewport/scissor to the slot. drawIndexedToTarget records
+    // the item-model draw into it (reusing the overlay pipeline; the RTT render pass is overlay-compatible).
+    // endTargetDraw ends the pass and leaves the color image shader-readable for the later atlas-quad blit.
+    // All recorded on the overlay command buffer, in MC call order. activeRenderTargetColorId_ is 0 when no
+    // RTT pass is open (0 is never a real GL texture id).
+    void beginTargetDraw(uint32_t colorId, int clearX, int clearY, int clearWidth, int clearHeight,
+                         float clearR, float clearG, float clearB, float clearA, double clearDepth);
+    void drawIndexedToTarget(std::shared_ptr<vk::DeviceLocalBuffer> vertexBuffer,
+                             std::shared_ptr<vk::DeviceLocalBuffer> indexBuffer,
+                             uint32_t shaderId,
+                             uint32_t uniformOffset,
+                             uint32_t indexCount,
+                             VkIndexType indexType);
+    void endTargetDraw();
+    // End any open overlay render pass (DRAW/POST) and return overlayMode to NONE so an RTT pass can begin;
+    // the next overlay drawIndexed re-opens the overlay pass via switchOverlayDraw.
+    void endActiveOverlayPass();
+    uint32_t activeRenderTargetColorId_ = 0;
+    // Viewport (full atlas) + scissor (current slot) for the active RTT pass. syncToCommandBuffer applies
+    // the overlay's swapchain-space viewport/scissor (wrong for the atlas), so each RTT draw re-applies
+    // these afterward.
+    VkViewport activeRenderTargetViewport_{};
+    VkRect2D activeRenderTargetScissor_{};
 
     void postBlur(int times = 1);
     void refreshOverlayDescriptorTable();

@@ -609,6 +609,84 @@ void UIModule::initOverlayDrawFrameBuffers() {
     }
 }
 
+void UIModule::ensureRenderTargetRenderPass() {
+    if (renderTargetRenderPass_ != nullptr) return;
+    auto framework = framework_.lock();
+
+    // Compatible with overlayDrawRenderPass_ (same formats + single subpass with a color ref {0} + depth
+    // ref 1), so the overlay pipelines render into it unchanged. LOAD both attachments -- the atlas is a
+    // cache items accumulate into, so a whole-attachment clear would wipe previously-rendered slots; the
+    // per-slot region clear is replayed inside the pass instead. Color finalLayout SHADER_READ so the
+    // later atlas-quad blit samples it.
+    renderTargetRenderPass_ = vk::RenderPassBuilder{}
+                                  .beginAttachmentDescription()
+                                  .defineAttachmentDescription(VkAttachmentDescription{
+                                      .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                      .samples = VK_SAMPLE_COUNT_1_BIT,
+                                      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                                      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                      .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                      .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                      .initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                      .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                  })
+                                  .defineAttachmentDescription(VkAttachmentDescription{
+                                      .format = VK_FORMAT_D32_SFLOAT,
+                                      .samples = VK_SAMPLE_COUNT_1_BIT,
+                                      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                                      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                      .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                      .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                      .initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                      .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                  })
+                                  .endAttachmentDescription()
+                                  .beginAttachmentReference()
+                                  .defineAttachmentReference({
+                                      .attachment = 0,
+                                      .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                  })
+                                  .defineAttachmentReference({
+                                      .attachment = 1,
+                                      .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                  })
+                                  .endAttachmentReference()
+                                  .beginSubpassDescription()
+                                  .defineSubpassDescription({
+                                      .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                      .colorAttachmentIndices = {0},
+                                      .depthStencilAttachmentIndex = 1,
+                                  })
+                                  .endSubpassDescription()
+                                  .build(framework->device());
+}
+
+UIModule::RenderTargetResources &UIModule::acquireRenderTarget(uint32_t colorId,
+                                                               std::shared_ptr<vk::DeviceLocalImage> colorImage) {
+    ensureRenderTargetRenderPass();
+    auto framework = framework_.lock();
+
+    auto &res = renderTargets_[colorId];
+    if (res.framebuffer == nullptr || res.width != colorImage->width() || res.height != colorImage->height()) {
+        framework->frameResourceRetainer().retain(res.framebuffer);
+        framework->frameResourceRetainer().retain(res.depthImage);
+        res.depthImage = vk::DeviceLocalImage::create(framework->device(), framework->vma(), false, 1u,
+                                                      colorImage->width(), colorImage->height(), 1u,
+                                                      VK_FORMAT_D32_SFLOAT,
+                                                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 0,
+                                                      VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0);
+        res.framebuffer = vk::FramebufferBuilder{}
+                              .beginAttachment()
+                              .defineAttachment(colorImage)
+                              .defineAttachment(res.depthImage)
+                              .endAttachment()
+                              .build(framework->device(), renderTargetRenderPass_);
+        res.width = colorImage->width();
+        res.height = colorImage->height();
+    }
+    return res;
+}
+
 void UIModule::initOverlayPostImages() {
     auto framework = framework_.lock();
 
@@ -1592,6 +1670,196 @@ void UIModuleContext::drawIndexed(std::shared_ptr<vk::DeviceLocalBuffer> vertexB
     context->overlayCommandBuffer->bindVertexBuffers(vertexBuffer)
         ->bindIndexBuffer(indexBuffer, indexType)
         ->drawIndexed(indexCount, 1);
+}
+
+void UIModuleContext::endActiveOverlayPass() {
+    auto context = frameworkContext.lock();
+    auto framework = context->framework.lock();
+    if (!framework->isRunning()) return;
+
+    if (overlayMode == DRAW) {
+        context->overlayCommandBuffer->endRenderPass();
+#ifdef USE_AMD
+        overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
+        overlayDrawColorImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
+        overlayDrawDepthStencilImage->imageLayout() = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        overlayMode = NONE;
+    } else if (overlayMode == POST) {
+        context->overlayCommandBuffer->endRenderPass();
+#ifdef USE_AMD
+        overlayPostColorImage->imageLayout() = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
+        overlayPostColorImage->imageLayout() = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif
+        overlayMode = NONE;
+    }
+}
+
+void UIModuleContext::beginTargetDraw(uint32_t colorId, int clearX, int clearY, int clearWidth, int clearHeight,
+                                      float clearR, float clearG, float clearB, float clearA, double clearDepth) {
+    auto context = frameworkContext.lock();
+    auto framework = context->framework.lock();
+    auto module = uiModule.lock();
+
+    if (!framework->isRunning()) return;
+
+    auto colorImage = Renderer::instance().textures()->texture(colorId);
+    if (colorImage == nullptr) return;
+
+    // A render pass cannot be nested; close any open overlay pass first (the next overlay draw re-opens it).
+    endActiveOverlayPass();
+
+    auto &res = module->acquireRenderTarget(colorId, colorImage);
+    auto mainQueueIndex = context->physicalDevice->mainQueueIndex();
+    auto cmd = context->overlayCommandBuffer->vkCommandBuffer();
+
+    context->overlayCommandBuffer->barriersBufferImage(
+        {}, {{
+                 .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                 .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                 .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 .oldLayout = colorImage->imageLayout(),
+                 .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 .srcQueueFamilyIndex = mainQueueIndex,
+                 .dstQueueFamilyIndex = mainQueueIndex,
+                 .image = colorImage,
+                 .subresourceRange = vk::wholeColorSubresourceRange,
+             },
+             {
+                 .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                 .srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                 .dstStageMask =
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 .dstAccessMask =
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 .oldLayout = res.depthImage->imageLayout(),
+                 .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                 .srcQueueFamilyIndex = mainQueueIndex,
+                 .dstQueueFamilyIndex = mainQueueIndex,
+                 .image = res.depthImage,
+                 .subresourceRange = vk::wholeDepthSubresourceRange,
+             }});
+    colorImage->imageLayout() = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    res.depthImage->imageLayout() = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    context->overlayCommandBuffer->beginRenderPass({
+        .renderPass = module->renderTargetRenderPass_,
+        .framebuffer = res.framebuffer,
+        .renderAreaExtent = {colorImage->width(), colorImage->height()},
+        // LOAD_OP_LOAD ignores these; present to match the two-attachment render pass.
+        .clearValues = {{.color = {0.0f, 0.0f, 0.0f, 0.0f}}, {.depthStencil = {.depth = 0.0f}}},
+    });
+
+    activeRenderTargetColorId_ = colorId;
+    activeRenderTargetViewport_ = VkViewport{.x = 0.0f,
+                                             .y = 0.0f,
+                                             .width = static_cast<float>(colorImage->width()),
+                                             .height = static_cast<float>(colorImage->height()),
+                                             .minDepth = 0.0f,
+                                             .maxDepth = 1.0f};
+    if (clearWidth > 0 && clearHeight > 0) {
+        activeRenderTargetScissor_ = VkRect2D{.offset = {clearX, clearY},
+                                              .extent = {static_cast<uint32_t>(clearWidth),
+                                                         static_cast<uint32_t>(clearHeight)}};
+    } else {
+        activeRenderTargetScissor_ = VkRect2D{.offset = {0, 0},
+                                              .extent = {colorImage->width(), colorImage->height()}};
+    }
+
+    // Replay the per-slot region clear inside the pass: color LOADs, so without clearing the slot the
+    // item's transparent pixels would show a previous slot's content. Clears color to transparent + depth
+    // to the far plane (reverse-Z 0.0 already captured as clearDepth).
+    if (clearWidth > 0 && clearHeight > 0) {
+        VkClearAttachment clears[2] = {};
+        clears[0].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        clears[0].colorAttachment = 0;
+        clears[0].clearValue.color = {{clearR, clearG, clearB, clearA}};
+        clears[1].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        clears[1].clearValue.depthStencil.depth = static_cast<float>(clearDepth);
+        VkClearRect rect{};
+        rect.rect = activeRenderTargetScissor_;
+        rect.baseArrayLayer = 0;
+        rect.layerCount = 1;
+        vkCmdClearAttachments(cmd, 2, clears, 1, &rect);
+    }
+}
+
+void UIModuleContext::drawIndexedToTarget(std::shared_ptr<vk::DeviceLocalBuffer> vertexBuffer,
+                                          std::shared_ptr<vk::DeviceLocalBuffer> indexBuffer,
+                                          uint32_t shaderId,
+                                          uint32_t uniformOffset,
+                                          uint32_t indexCount,
+                                          VkIndexType indexType) {
+    auto context = frameworkContext.lock();
+    auto framework = context->framework.lock();
+    auto module = uiModule.lock();
+
+    if (!framework->isRunning()) return;
+    if (activeRenderTargetColorId_ == 0) return; // no RTT pass open (defensive)
+
+    // Apply this draw's dynamic state (blend/depth/cull/stencil, set via the PipelineStateProxy setters),
+    // then override viewport/scissor -- syncToCommandBuffer applies the overlay's swapchain-space
+    // viewport/scissor, which are wrong for the off-screen atlas.
+    syncToCommandBuffer();
+    auto cmd = context->overlayCommandBuffer->vkCommandBuffer();
+    vkCmdSetViewport(cmd, 0, 1, &activeRenderTargetViewport_);
+    vkCmdSetScissor(cmd, 0, 1, &activeRenderTargetScissor_);
+
+    auto &shaderInfo = module->overlayDrawShaderInfo(shaderId);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shaderInfo.pipeline->vkPipeline());
+
+    uint32_t dynamicOffsets[] = {uniformOffset, 0};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, overlayDescriptorTable->vkPipelineLayout(), 0,
+                            overlayDescriptorTable->descriptorSet().size(),
+                            overlayDescriptorTable->descriptorSet().data(), 2, dynamicOffsets);
+
+    context->overlayCommandBuffer->bindVertexBuffers(vertexBuffer)
+        ->bindIndexBuffer(indexBuffer, indexType)
+        ->drawIndexed(indexCount, 1);
+}
+
+void UIModuleContext::endTargetDraw() {
+    auto context = frameworkContext.lock();
+    auto framework = context->framework.lock();
+    auto module = uiModule.lock();
+
+    if (!framework->isRunning()) return;
+    if (activeRenderTargetColorId_ == 0) return;
+
+    context->overlayCommandBuffer->endRenderPass();
+
+    // The render pass finalLayout already put the color image in SHADER_READ_ONLY; track it and add an
+    // explicit color-write -> fragment-shader-sample dependency so the later atlas-quad blit reads the
+    // finished pixels (the render pass's own final transition does not order against the sampling stage).
+    auto colorImage = Renderer::instance().textures()->texture(activeRenderTargetColorId_);
+    if (colorImage != nullptr) {
+        auto mainQueueIndex = context->physicalDevice->mainQueueIndex();
+        context->overlayCommandBuffer->barriersBufferImage(
+            {}, {{
+                     .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     .srcQueueFamilyIndex = mainQueueIndex,
+                     .dstQueueFamilyIndex = mainQueueIndex,
+                     .image = colorImage,
+                     .subresourceRange = vk::wholeColorSubresourceRange,
+                 }});
+        colorImage->imageLayout() = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    }
+    auto rtIter = module->renderTargets_.find(activeRenderTargetColorId_);
+    if (rtIter != module->renderTargets_.end() && rtIter->second.depthImage != nullptr) {
+        rtIter->second.depthImage->imageLayout() = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    }
+
+    activeRenderTargetColorId_ = 0;
+    // overlayMode is already NONE (beginTargetDraw closed any overlay pass); the next overlay drawIndexed
+    // re-opens the overlay pass via switchOverlayDraw.
 }
 
 void UIModuleContext::postBlur(int times) {

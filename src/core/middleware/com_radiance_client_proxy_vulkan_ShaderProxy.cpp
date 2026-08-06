@@ -70,3 +70,42 @@ JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_ShaderProxy_draw(
     pipelineContext->uiModuleContext->drawIndexed(vertexBuffer, indexBuffer, shaderId, uniformOffset, indexCount,
                                                   static_cast<VkIndexType>(indexType));
 }
+
+// Render-target-aware draw path (GuiItemAtlas item icons). beginTarget opens the RTT render pass on the
+// registered color texture (with the per-slot region clear); drawToTarget records the item-model draw into
+// it; endTarget ends it and leaves the color image shader-readable for the atlas-quad blit.
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_ShaderProxy_beginTarget(
+    JNIEnv *, jclass, jint colorGlId, jint clearX, jint clearY, jint clearWidth, jint clearHeight, jfloat clearR,
+    jfloat clearG, jfloat clearB, jfloat clearA, jdouble clearDepth) {
+    auto framework = Renderer::instance().framework();
+    if (framework == nullptr) return;
+    auto context = framework->safeAcquireCurrentContext();
+    auto pipelineContext = framework->pipeline()->acquirePipelineContext(context);
+    pipelineContext->uiModuleContext->beginTargetDraw(static_cast<uint32_t>(colorGlId), clearX, clearY, clearWidth,
+                                                      clearHeight, clearR, clearG, clearB, clearA, clearDepth);
+}
+
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_ShaderProxy_drawToTarget(
+    JNIEnv *, jclass, jint vertexId, jint indexId, jint shaderId, jint indexCount, jint indexType, jlong uniformPtr,
+    jint uniformSize) {
+    auto framework = Renderer::instance().framework();
+    if (framework == nullptr) return;
+    if (shaderId < 0) return;
+    auto vertexBuffer = Renderer::instance().buffers()->getBuffer(vertexId);
+    auto indexBuffer = Renderer::instance().buffers()->getBuffer(indexId);
+    uint32_t uniformOffset = 0;
+    Renderer::instance().buffers()->appendOverlayDrawUniform(
+        reinterpret_cast<uint8_t *>(uniformPtr), uniformSize, uniformOffset);
+    auto context = framework->safeAcquireCurrentContext();
+    auto pipelineContext = framework->pipeline()->acquirePipelineContext(context);
+    pipelineContext->uiModuleContext->drawIndexedToTarget(vertexBuffer, indexBuffer, shaderId, uniformOffset,
+                                                          indexCount, static_cast<VkIndexType>(indexType));
+}
+
+JNIEXPORT void JNICALL Java_com_radiance_client_proxy_vulkan_ShaderProxy_endTarget(JNIEnv *, jclass) {
+    auto framework = Renderer::instance().framework();
+    if (framework == nullptr) return;
+    auto context = framework->safeAcquireCurrentContext();
+    auto pipelineContext = framework->pipeline()->acquirePipelineContext(context);
+    pipelineContext->uiModuleContext->endTargetDraw();
+}

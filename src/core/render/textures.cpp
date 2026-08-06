@@ -115,6 +115,48 @@ void Textures::initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width,
     Renderer::instance().framework()->pipeline()->bindTexture(samplers[id], textures_[id], id);
 }
 
+void Textures::initializeRenderTarget(uint32_t id, uint32_t width, uint32_t height, VkFormat format) {
+    auto framework = Renderer::instance().framework();
+    auto device = framework->device();
+    auto vma = framework->vma();
+
+    std::scoped_lock lck(mtx_, Renderer::instance().framework()->recreateMtx());
+
+    texturesCerr() << "initRenderTarget id=" << id << " " << width << "x" << height << " format=" << format
+                   << std::endl;
+
+    if (textures_.find(id) == textures_.end()) {
+        textures_.emplace(id, nullptr);
+        samplers.emplace(id, nullptr);
+    }
+
+    // Any uploads queued against a previous image at this id were sized to it; drop them (as
+    // initializeTexture does) so flushQueuedUploadImpl does not replay a stale extent into this image.
+    if (uploadQueue_ != nullptr) {
+        auto queuedIter = uploadQueue_->find(id);
+        if (queuedIter != uploadQueue_->end()) { uploadQueue_->erase(queuedIter); }
+    }
+
+    framework->frameResourceRetainer().retain(textures_[id]);
+    textures_[id] = vk::DeviceLocalImage::create(
+        device, vma, false, 1u, width, height, 1u, format,
+        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0,
+        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, 0
+#ifdef DEBUG
+        ,
+        "RenderTarget " + std::to_string(id)
+#endif
+    );
+
+    // CLAMP_TO_EDGE so sampling an atlas slot cannot wrap onto the opposite edge; NEAREST keeps item
+    // icons crisp and avoids one-texel bleed across neighbouring slots at the slot boundary.
+    framework->frameResourceRetainer().retain(samplers[id]);
+    samplers[id] = vk::Sampler::create(device, VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
+
+    Renderer::instance().framework()->pipeline()->bindTexture(samplers[id], textures_[id], id);
+}
+
 void Textures::prepareCubeImage(uint32_t id, uint32_t maxLevel, uint32_t faceWidth, uint32_t faceHeight,
                                 VkFormat format) {
     auto framework = Renderer::instance().framework();

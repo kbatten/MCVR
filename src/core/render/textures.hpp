@@ -30,6 +30,10 @@ class Textures : public SharedObject<Textures> {
     void resetFrame();
     uint32_t allocateTexture();
     void initializeTexture(uint32_t id, uint32_t maxLevel, uint32_t width, uint32_t height, VkFormat format);
+    // Off-screen render-target COLOR image (e.g. GuiItemAtlas): registered + bound into the bindless
+    // array under its GL id like a normal 2D texture, but created with COLOR_ATTACHMENT usage so the
+    // draw-replay path can render INTO it (see UIModuleContext::beginTargetDraw). Single mip.
+    void initializeRenderTarget(uint32_t id, uint32_t width, uint32_t height, VkFormat format);
     // Cube textures (the panorama) live in a separate registry from the 2D textures_ because they are
     // sampled as samplerCube through the overlay cube bindless binding, not sampler2D. prepareCubeImage
     // creates a 6-layer cube-compatible image + sampler and binds it into the overlay cube array at its
