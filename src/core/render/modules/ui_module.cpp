@@ -4,6 +4,7 @@
 #include "core/render/pipeline.hpp"
 #include "core/render/render_framework.hpp"
 #include "core/render/renderer.hpp"
+#include "core/render/textures.hpp"
 #include "core/render/world.hpp"
 
 #include <cstdlib>
@@ -1776,7 +1777,10 @@ void UIModuleContext::beginTargetDraw(uint32_t colorId, int clearX, int clearY, 
         VkClearAttachment clears[2] = {};
         clears[0].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         clears[0].colorAttachment = 0;
-        clears[0].clearValue.color = {{clearR, clearG, clearB, clearA}};
+        clears[0].clearValue.color.float32[0] = clearR;
+        clears[0].clearValue.color.float32[1] = clearG;
+        clears[0].clearValue.color.float32[2] = clearB;
+        clears[0].clearValue.color.float32[3] = clearA;
         clears[1].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         clears[1].clearValue.depthStencil.depth = static_cast<float>(clearDepth);
         VkClearRect rect{};
