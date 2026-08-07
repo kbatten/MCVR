@@ -1781,10 +1781,19 @@ void UIModuleContext::beginTargetDraw(uint32_t colorId, int clearX, int clearY, 
     }
 
     activeRenderTargetColorId_ = colorId;
+    // Y-FLIPPED viewport (negative height, origin at the bottom). MC renders every off-screen target
+    // (GuiItemAtlas slots, PictureInPictureRenderer entity/skin/banner previews) via
+    // outputColorTextureOverride, then samples that texture back with a V-flipped blit (v0=1,v1=0) that
+    // assumes GL bottom-up storage. Our overlay renders top-left and is corrected by the composite flip,
+    // but MC's blit is fixed and reads these targets directly -- so a plain top-left RTT render comes out
+    // upside down (visible for a full-texture PIP; for a per-slot atlas item it lands on the vertically
+    // opposite slot, so the slot blit samples empty and the icon is invisible). Rendering with a negative
+    // viewport height stores the target GL-bottom-up so MC's V-flip reads it upright. This inverts
+    // triangle winding, so the RTT draw path runs with cull disabled (see radiance$applyPipelineDepthAndCull).
     activeRenderTargetViewport_ = VkViewport{.x = 0.0f,
-                                             .y = 0.0f,
+                                             .y = static_cast<float>(colorImage->height()),
                                              .width = static_cast<float>(colorImage->width()),
-                                             .height = static_cast<float>(colorImage->height()),
+                                             .height = -static_cast<float>(colorImage->height()),
                                              .minDepth = 0.0f,
                                              .maxDepth = 1.0f};
     if (clearWidth > 0 && clearHeight > 0) {
