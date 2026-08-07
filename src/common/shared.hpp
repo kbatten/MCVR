@@ -56,11 +56,7 @@ namespace VertexFormat {
     struct PositionColorNormal {
         T_VEC3 position;
         T_UINT color;
-        T_UINT normal;    // first 3 bytes (RGBA8_SNORM)
-        T_FLOAT lineWidth; // 26.2 lines() is POSITION_COLOR_NORMAL_LINE_WIDTH: a per-vertex R32_FLOAT
-                           // line width follows the normal. Unused by the RT tube expansion, but it is
-                           // part of the 24-byte stride -- without it every vertex after the first reads
-                           // 4 bytes short and positions drift (the block outline extends past the block).
+        T_UINT normal; // first 3 bytes
     };
 
     struct PositionTex {

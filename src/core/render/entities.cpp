@@ -509,25 +509,35 @@ void Entities::queueBuild(EntitiesBuildTask task) {
                             break;
                         }
                         case World::LINES: {
-                            vk::VertexFormat::PositionColorNormal *vertices =
-                                static_cast<vk::VertexFormat::PositionColorNormal *>(task.vertices[geometryIndex + i]);
+                            // 26.2 lines() is POSITION_COLOR_NORMAL_LINE_WIDTH: a per-vertex R32_FLOAT
+                            // line width follows the normal, so the real stride is 24 bytes, not
+                            // sizeof(PositionColorNormal) (20). Index the raw bytes at the true stride --
+                            // kept LOCAL so the shared PositionColorNormal struct (and the format-5
+                            // pipeline layout that derives its binding stride from sizeof) stays
+                            // unchanged. Without the +4 stride every vertex after the first reads 4 bytes
+                            // short and positions drift (the outline extends past the block).
+                            constexpr size_t kLineVertexStride =
+                                sizeof(vk::VertexFormat::PositionColorNormal) + sizeof(float);
+                            auto *lineBytes = static_cast<uint8_t *>(task.vertices[geometryIndex + i]);
+                            auto *vertices = reinterpret_cast<vk::VertexFormat::PositionColorNormal *>(
+                                lineBytes + static_cast<size_t>(j) * kLineVertexStride);
 
-                            vertex.pos = vertices[j].position;
+                            vertex.pos = vertices->position;
 
                             vertex.useColorLayer = 1;
                             vertex.colorLayer = glm::vec4{
-                                vertices[j].color & 0xFF,
-                                (vertices[j].color >> 8) & 0xFF,
-                                (vertices[j].color >> 16) & 0xFF,
-                                (vertices[j].color >> 24) & 0xFF,
+                                vertices->color & 0xFF,
+                                (vertices->color >> 8) & 0xFF,
+                                (vertices->color >> 16) & 0xFF,
+                                (vertices->color >> 24) & 0xFF,
                             };
                             vertex.colorLayer /= 255.0;
 
                             vertex.useNorm = 1;
                             vertex.norm = glm::vec3{
-                                (int8_t)(vertices[j].normal & 0xFF),
-                                (int8_t)((vertices[j].normal >> 8) & 0xFF),
-                                (int8_t)((vertices[j].normal >> 16) & 0xFF),
+                                (int8_t)(vertices->normal & 0xFF),
+                                (int8_t)((vertices->normal >> 8) & 0xFF),
+                                (int8_t)((vertices->normal >> 16) & 0xFF),
                             };
 
                             break;
