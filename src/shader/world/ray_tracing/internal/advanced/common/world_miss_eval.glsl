@@ -96,9 +96,9 @@ vec4 evalMoonBillboard(vec3 rayDir) {
     vec2 a = abs(q);
     if (a.x > tanHalf || a.y > tanHalf) return vec4(0.0);
     vec2 uv = q / tanHalf * 0.5 + 0.5;
-    uvec2 tileCount = uvec2(4u, 2u);
-    uvec2 tile = uvec2(skyUBO.moonPhase % tileCount.x, (skyUBO.moonPhase / tileCount.x) % tileCount.y);
-    return sampleAtlasLod0(textures[nonuniformEXT(skyUBO.moonTextureID)], uv, tileCount, tile);
+    // 26.2: each moon phase is its own full-extent texture (the 4x2 moon_phases.png atlas is gone), so
+    // the Java side hands us the current phase's disc directly -- sample it whole, no tile indexing.
+    return sampleTextureLod0(textures[nonuniformEXT(skyUBO.moonTextureID)], uv);
 }
 
 void main() {
