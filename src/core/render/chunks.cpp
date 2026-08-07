@@ -183,6 +183,10 @@ static glm::vec3 emissionVertexTint(const vk::VertexFormat::PBRVertex &vertex) {
     return glm::clamp(glm::vec3(vertex.colorLayer), glm::vec3(0.0f), glm::vec3(1.0f));
 }
 
+// Fixed cell-key sentinel for vanilla (light-level) emissive quads, which have no LabPBR emission cell
+// of their own; keeps their synthesized-light stable IDs distinct from any real cell's.
+static constexpr uint64_t kVanillaEmissionStableKey = 0x9e3779b97f4a7c15ull;
+
 static uint64_t buildChunkLightStableID(int64_t chunkId,
                                         uint32_t geometryIndex,
                                         uint32_t quadIndex,
@@ -358,6 +362,11 @@ void ChunkBuildData::buildLightInfos(const Emission &emission) {
             glm::vec3 tint2 = emissionVertexTint(v2);
             glm::vec3 tint3 = emissionVertexTint(v3);
 
+            // Per-vertex emission scalar (LabPBR specular alpha, or the vanilla light-level fallback set
+            // in BlockModelRendererMixins). Used only when no LabPBR emission cell covers this quad.
+            float quadEmission =
+                0.25f * (v0.albedoEmission + v1.albedoEmission + v2.albedoEmission + v3.albedoEmission);
+
             if (v0.useTexture == 0 || v1.useTexture == 0 || v2.useTexture == 0 || v3.useTexture == 0) {
                 continue;
             }
@@ -389,6 +398,7 @@ void ChunkBuildData::buildLightInfos(const Emission &emission) {
                 continue;
             }
 
+            size_t lightsBeforeQuad = lightInfos.size();
             thread_local std::vector<std::shared_ptr<const EmissionCell>> candidateCells;
             emission.collectCells(v0.textureID, uvMin, uvMax, candidateCells);
             for (const auto &candidateCell : candidateCells) {
@@ -474,6 +484,43 @@ void ChunkBuildData::buildLightInfos(const Emission &emission) {
                         };
                         lightInfos.push_back(info);
                     }
+                }
+            }
+
+            // Vanilla emissive fallback: an emissive block (light-emission level -> per-vertex
+            // albedoEmission) whose atlas texel has no LabPBR emission cell still needs to cast light.
+            // When the cell pass above contributed nothing for this quad, synthesize a whole-quad area
+            // light so torches/glowstone/lava/fire emit without a PBR pack. A quad the pack DID mark
+            // emissive (a cell contributed) is left to the more accurate per-cell lights above.
+            if (lightInfos.size() == lightsBeforeQuad && quadEmission > 1e-4f) {
+                glm::vec3 avgTint = glm::max((tint0 + tint1 + tint2 + tint3) * 0.25f, glm::vec3(0.0f));
+                glm::vec3 radiance = avgTint * quadEmission;
+                uint64_t baseStableID =
+                    buildChunkLightStableID(id, geometryIndex, quadIndex, kVanillaEmissionStableKey);
+                const std::array<std::array<glm::vec3, 3>, 2> emitTriangles = {{
+                    {v0.pos, v1.pos, v2.pos},
+                    {v0.pos, v2.pos, v3.pos},
+                }};
+                for (uint64_t triIndex = 0; triIndex < emitTriangles.size(); ++triIndex) {
+                    const auto &tri = emitTriangles[triIndex];
+                    float triAreaValue = triangleArea(tri[0], tri[1], tri[2]);
+                    if (triAreaValue <= 1e-6f) {
+                        continue;
+                    }
+                    glm::vec3 triNormal = glm::cross(tri[1] - tri[0], tri[2] - tri[0]);
+                    float triNormalLength = glm::length(triNormal);
+                    triNormal = triNormalLength > 1e-6f ? triNormal / triNormalLength : normal;
+                    lightInfos.push_back(LightInfo{
+                        .p0 = tri[0],
+                        .p1 = tri[1],
+                        .p2 = tri[2],
+                        .p3 = tri[2],
+                        .normal = triNormal,
+                        .radiance = radiance,
+                        .area = triAreaValue,
+                        .textureID = v0.textureID,
+                        .stableID = hashCombine64(baseStableID, triIndex),
+                    });
                 }
             }
         }
