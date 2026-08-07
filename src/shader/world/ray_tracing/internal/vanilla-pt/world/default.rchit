@@ -699,6 +699,8 @@ bool traceLocalHeightIntersectionAndExit(int normalTextureID,
     return false;
 }
 
+#include "common/dynamic_point_light.glsl"
+
 vec3 sampleSurfaceDirectLight(SampledSurface surface,
                               vec3 viewDir,
                               vec2 referenceUv,
@@ -954,6 +956,7 @@ void main() {
             sampleSurfaceDirectLight(currentSurface, currentViewDir, textureUV, planeHitWorldPos, atlasUvMin, atlasUvMax,
                                      dPduWorld, dPdvWorld, baseGeoNormal, traceLocalHeight,
                                      textureMap.normal, maxDepthWorld, hasFftWaterSurface);
+        directLight += sampleSurfaceDynamicPointLights(currentSurface, currentViewDir);
         if (localBounce == 0) { mainRay.directLightRadiance = directLight; }
         mainRay.radiance += directLight;
 

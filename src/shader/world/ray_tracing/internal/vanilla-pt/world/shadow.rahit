@@ -95,6 +95,11 @@ void main() {
     }
 
     if (!isWaterMaterial && alphaMode != ALPHA_MODE_TRANSPARENT) {
+        // Fully opaque occluder. The directional-light path detects occlusion via shadowRay.radiance
+        // (0 unless the miss shader runs), so zeroing throughput here does not affect it. Dynamic point
+        // lights, which have a finite shadow ray that still hits the miss shader when unoccluded, instead
+        // read shadowRay.throughput as pure visibility -- so an opaque hit must drive it to zero.
+        shadowRay.throughput = vec3(0.0);
         terminateRayEXT;
         return;
     }

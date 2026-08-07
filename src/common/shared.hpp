@@ -10,6 +10,10 @@
 #define INV_TWO_PI 0.15915494309189533
 #define INV_4_PI 0.07957747154594766
 
+// Dynamic (handheld) point lights carried in the SkyUBO. Small fixed cap: the local player's two
+// hands plus headroom. Shared by C++ (packing) and GLSL (sampling).
+#define MCVR_MAX_DYNAMIC_LIGHTS 4
+
 #ifdef __cplusplus
 namespace vk {
 #endif
@@ -249,6 +253,18 @@ namespace Data {
         T_UINT pad4;
     };
 
+    // A handheld/dynamic point light (torch, lantern, glowstone in hand). Position is in
+    // camera-relative (scene) space -- the same space the ray tracer and SkyUBO already work in --
+    // so it needs no per-frame world offset. Laid out as two vec4s (vec3+float twice) so std140 and
+    // native packing agree without padding.
+    struct DynamicLight {
+        T_VEC3 position;   // camera-relative scene position
+        T_FLOAT intensity; // radiance scale; <= 0 means the slot is inactive
+
+        T_VEC3 color;      // linear RGB tint (e.g. warm for a torch)
+        T_FLOAT range;     // reach in blocks; contribution is cut off past this
+    };
+
     struct SkyUBO {
         T_VEC3 baseColor;
         T_UINT skyType;
@@ -266,7 +282,9 @@ namespace Data {
 
         T_UINT sunTextureID;
         T_UINT moonTextureID;
-        T_UINT pad0;
+        T_UINT dynamicLightCount; // number of active entries in dynamicLights (was pad0)
+
+        DynamicLight dynamicLights[MCVR_MAX_DYNAMIC_LIGHTS];
     };
 
     struct TextureMapEntry {
