@@ -860,23 +860,18 @@ void Entities::queueBuild(EntitiesBuildTask task) {
                     break;
                 }
                 case World::DrawMode::LINES: {
+                    // 26.2 emits the block-target outline as GL_LINES: two vertices per edge
+                    // (ShapeOutlineFeatureRenderer -> VoxelShape.forAllEdges), so every consecutive
+                    // (start, end) pair is one edge. Expand each edge into a thin box (tube): the ray
+                    // tracer needs real geometry, and MC's line-width quad expansion runs in a vertex
+                    // shader the RT path never executes. (The previous code reshuffled groups of four
+                    // into six to match the 1.21 outline's vertex layout; under 26.2's pair layout that
+                    // fabricated a spurious diagonal edge per group of four -- the "L"-shaped outline.)
                     std::vector<vk::VertexFormat::PBRVertex> fixedVertices;
-                    for (int j = 0; j + 3 < task.vertexCounts[geometryIndex + i]; j += 4) {
-                        fixedVertices.push_back(geometryVertices[j]);
-                        fixedVertices.push_back(geometryVertices[j + 1]);
-                        fixedVertices.push_back(geometryVertices[j + 2]);
-                        fixedVertices.push_back(geometryVertices[j + 3]);
-                        fixedVertices.push_back(geometryVertices[j + 2]);
-                        fixedVertices.push_back(geometryVertices[j + 1]);
-                    }
-                    geometryVertices = fixedVertices;
-
-                    fixedVertices.clear();
-
                     int accu = 0;
-                    for (int j = 1; j < geometryVertices.size(); j += 2) {
+                    for (int j = 0; j + 1 < static_cast<int>(geometryVertices.size()); j += 2) {
                         auto [success, cubePoints] = cubeCornersFromFaceCenters(
-                            geometryVertices[j - 1].pos, geometryVertices[j].pos, task.lineWidth);
+                            geometryVertices[j].pos, geometryVertices[j + 1].pos, task.lineWidth);
 
                         if (!success) { continue; }
 
@@ -885,7 +880,7 @@ void Entities::queueBuild(EntitiesBuildTask task) {
                                 .pos = cubePoints[k],
                                 .useColorLayer = 1,
                                 .colorLayer =
-                                    k < 4 ? geometryVertices[j - 1].colorLayer : geometryVertices[j].colorLayer,
+                                    k < 4 ? geometryVertices[j].colorLayer : geometryVertices[j + 1].colorLayer,
                             });
                         }
 
