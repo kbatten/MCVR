@@ -39,6 +39,16 @@ layout(location = 16) in vec4 overlayColor;
 layout(location = 0) out vec4 fragColor;
 
 void main() {
+    // TEMP diagnostic (#10 particles): force the post geometry visible to bisect the
+    // invisible-particle bug -- opaque, nearest depth, no discard/lightmap. Where the sampled
+    // texture is opaque we show its color; where transparent we show magenta. So: textured shapes =>
+    // sampling+UV work (bug was discard/lightmap/depth); solid magenta billboards => texture sample
+    // returns alpha 0 (wrong/empty textureID); nothing at all => coords/compositing. Revert after.
+    vec4 dbgTex = (useTexture > 0) ? texture(textures[nonuniformEXT(textureID)], textureUV) : vec4(0.0);
+    fragColor = vec4(mix(vec3(1.0, 0.0, 1.0), dbgTex.rgb, dbgTex.a), 1.0);
+    gl_FragDepth = 0.0;
+    return;
+
     vec4 color = vec4(0.0);
     float emission = 0.0;
     int specularTextureID = mapping.entries[textureID].specular;
