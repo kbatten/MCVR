@@ -329,6 +329,19 @@ void Textures::queueUpload(uint8_t *srcPointer,
     }
     auto dstTexture = (*dstTextureIter).second;
 
+    // Guard against uploading to a mip level the image does not have. MC's logical atlas mip count
+    // (TextureAtlas.mipLevelCount) can exceed the mip count the backend image was imported with: 26.2
+    // generates the higher atlas mips on the GPU via a blit the backend never replays, so the imported
+    // image is single-mip while the per-mip sprite upload loop still targets level 1. The spatial guard
+    // below computes the level extent as (width >> level), which stays plausible for a nonexistent mip
+    // and lets the copy through; issuing it writes outside the image and faults the GPU (device lost via
+    // TDR -> a null-deref crash in the next present). Drop it, loudly, like the out-of-bounds skip.
+    if (level >= dstTexture->mipLevels()) {
+        texturesCerr() << "SKIP upload to nonexistent mip level: dstId=" << dstId << " level=" << level
+                       << " (image has " << dstTexture->mipLevels() << " mip level(s))" << std::endl;
+        return;
+    }
+
     // MC validates every writeToTexture against its own GpuTexture extent before we ever see it, so
     // a region that overruns *our* image means textures_[dstId] is stale -- it is still the image of
     // an earlier texture that held this GL id. (prepareImage silently ignores the 52 of 56 GpuFormats

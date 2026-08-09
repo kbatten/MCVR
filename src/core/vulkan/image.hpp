@@ -230,6 +230,7 @@ class DeviceLocalImage : public Image, public SharedObject<DeviceLocalImage> {
     uint32_t height() override;
     uint32_t depth() override;
     uint32_t layer() override;
+    uint32_t mipLevels();
     VkFormat &vkFormat() override;
     VkBuffer &vkStagingBuffer();
     VkImage &vkImage() override;

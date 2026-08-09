@@ -580,6 +580,10 @@ uint32_t vk::DeviceLocalImage::layer() {
     return layer_;
 }
 
+uint32_t vk::DeviceLocalImage::mipLevels() {
+    return mipLevels_;
+}
+
 VkFormat &vk::DeviceLocalImage::vkFormat() {
     return format_;
 }
