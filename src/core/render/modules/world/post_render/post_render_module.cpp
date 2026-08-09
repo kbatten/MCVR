@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -1823,6 +1824,21 @@ void PostRenderModuleContext::render() {
                     }
                 }
             }
+            // TEMP diagnostic (#10 particles): report whether the particle post pass has work.
+            if (pass->target == RenderPass::Target::Particle && std::getenv("RADIANCE_DEBUG_POST") != nullptr) {
+                int dbgPostEntities = 0;
+                auto dbgBatch = Renderer::instance().world()->entities()->entityPostBatch();
+                if (dbgBatch != nullptr) {
+                    for (const auto &e : dbgBatch->entities) {
+                        if (e->postRenderFlag == PostRenderModule::renderTargetPostFlag(pass->target)) {
+                            dbgPostEntities++;
+                        }
+                    }
+                }
+                std::cerr << "[PostDbg] particle hasWork=" << hasWork << " postEntities=" << dbgPostEntities
+                          << " batchNull=" << (dbgBatch == nullptr) << " passPipelineNull=" << (pass->pipeline == nullptr)
+                          << std::endl;
+            }
             if (!hasWork) { return; }
 
             worldCommandBuffer->beginRenderPass({
@@ -1846,6 +1862,9 @@ void PostRenderModuleContext::render() {
                 auto entityPostRenderDataBatch = Renderer::instance().world()->entities()->entityPostBatch();
                 const int postRenderFlag = PostRenderModule::renderTargetPostFlag(pass->target);
                 const RenderPass::ShaderVariant *boundVariant = nullptr;
+                int dbgDrawnGeoms = 0;
+                long dbgDrawnIndices = 0;
+                int dbgSkippedNoVariant = 0;
                 for (const auto &entity : entityPostRenderDataBatch->entities) {
                     if (entity->postRenderFlag != postRenderFlag) { continue; }
 
@@ -1853,7 +1872,10 @@ void PostRenderModuleContext::render() {
                         const std::string &contentName =
                             j < entity->geometryContentNames.size() ? entity->geometryContentNames[j] : std::string{};
                         const RenderPass::ShaderVariant *variant = findShaderVariant(*pass, contentName);
-                        if (variant == nullptr || variant->pipeline == nullptr) { continue; }
+                        if (variant == nullptr || variant->pipeline == nullptr) {
+                            dbgSkippedNoVariant++;
+                            continue;
+                        }
                         const std::string variantName = findShaderVariantName(*pass, contentName);
                         // if (!variantName.empty()) {
                         //     logShaderVariantSelectionOnce(pass->config.name, contentName, variantName);
@@ -1869,7 +1891,14 @@ void PostRenderModuleContext::render() {
                         worldCommandBuffer->bindVertexBuffers(vertexBuffer)
                             ->bindIndexBuffer(indexBuffer)
                             ->drawIndexed(entity->indexCounts[j], 1);
+                        dbgDrawnGeoms++;
+                        dbgDrawnIndices += entity->indexCounts[j];
                     }
+                }
+                // TEMP diagnostic (#10 particles): report what the particle post pass actually drew.
+                if (pass->target == RenderPass::Target::Particle && std::getenv("RADIANCE_DEBUG_POST") != nullptr) {
+                    std::cerr << "[PostDbg] particle DREW geoms=" << dbgDrawnGeoms << " indices=" << dbgDrawnIndices
+                              << " skippedNoVariant=" << dbgSkippedNoVariant << std::endl;
                 }
             }
             worldCommandBuffer->endRenderPass();
