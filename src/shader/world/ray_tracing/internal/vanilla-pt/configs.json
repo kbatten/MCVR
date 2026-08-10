@@ -772,6 +772,20 @@
                         "rahit": "world/text.rahit"
                     }
                 },
+                "text": {
+                    "type": "triangle",
+                    "shaders": {
+                        "rchit": "world/default.rchit",
+                        "rahit": "world/text.rahit"
+                    }
+                },
+                "text_intensity": {
+                    "type": "triangle",
+                    "shaders": {
+                        "rchit": "world/default.rchit",
+                        "rahit": "world/text.rahit"
+                    }
+                },
                 "lightning": {
                     "type": "triangle",
                     "shaders": {
