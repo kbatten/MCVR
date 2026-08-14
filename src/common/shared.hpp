@@ -146,6 +146,13 @@ namespace VertexFormat {
 
         T_VEC3 postBase;
         T_UINT alphaMode;
+
+        // Vanilla emissive-block light color (rgb; .a unused padding). Set Java-side on emissive quads
+        // (BlockModelRenderer/FluidRenderer) from the block's normalized texture hue; buildLightInfos
+        // tints the synthesized vanilla area light with it so torch/lava/redstone glow warm and soul
+        // torch/sea lantern keep their true color, instead of a flat white glow. 0 = unset -> tint
+        // fallback. Build-time only (not packed into MaterialVertex / never reaches the GPU geometry).
+        T_VEC4 emissionColor;
     };
 
     struct PositionVertex {

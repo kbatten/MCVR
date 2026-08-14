@@ -494,7 +494,15 @@ void ChunkBuildData::buildLightInfos(const Emission &emission) {
             // emissive (a cell contributed) is left to the more accurate per-cell lights above.
             if (lightInfos.size() == lightsBeforeQuad && quadEmission > 1e-4f) {
                 glm::vec3 avgTint = glm::max((tint0 + tint1 + tint2 + tint3) * 0.25f, glm::vec3(0.0f));
-                glm::vec3 radiance = avgTint * quadEmission;
+                // Tint the vanilla area light with the block's own emissive texture hue (Java sets a
+                // normalized emissive color on emissive quads). Without it the light was avgTint (~white
+                // for an untinted torch), so every emitter glowed white; now torch/lava/redstone read
+                // warm, soul torch/sea lantern read cool. Falls back to avgTint when unset (0), so
+                // behavior is unchanged for quads that carry no emissive color.
+                glm::vec3 emitColor = 0.25f * (glm::vec3(v0.emissionColor) + glm::vec3(v1.emissionColor) +
+                                               glm::vec3(v2.emissionColor) + glm::vec3(v3.emissionColor));
+                bool hasEmitColor = (emitColor.r + emitColor.g + emitColor.b) > 1e-4f;
+                glm::vec3 radiance = (hasEmitColor ? emitColor * avgTint : avgTint) * quadEmission;
                 uint64_t baseStableID =
                     buildChunkLightStableID(id, geometryIndex, quadIndex, kVanillaEmissionStableKey);
                 const std::array<std::array<glm::vec3, 3>, 2> emitTriangles = {{
