@@ -41,15 +41,14 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         vec3 brdf = DisneyEval(surface.mat, viewDir, surface.shadingNormal, L, lightPdf);
         if (lightPdf <= 1e-6) { continue; }
 
-        // Inverse-square falloff with a smooth window to the light's range. The window uses
-        // (1 - (d/R)^4) rather than (1 - (d/R)^2): it stays near 1 through most of the range and only
-        // fades near the edge, so a carried torch reaches noticeably further before dying instead of
-        // dimming hard from the source. Range itself is light.range (the block level). The 0.25 floor
-        // keeps surfaces very close to the light from blowing up.
-        float atten = 1.0 / max(dist2, 0.25);
-        float rangeFrac = dist2 / (range * range); // (d/R)^2
-        float edge = clamp(1.0 - rangeFrac * rangeFrac, 0.0, 1.0); // 1 - (d/R)^4
-        atten *= edge * edge;
+        // Handheld lights need vanilla-torch REACH (light a room), which inverse-square (1/d^2) can't
+        // give -- it collapses to a tiny bright hotspot. Use a smooth LINEAR-radius falloff instead:
+        // (1 - d/R)^2 floods the whole radius and eases to 0 at the range cap R (= light.range, the
+        // block level), like a vanilla torch's per-block spread. No 1/d^2 term, so no near-source
+        // singularity to clamp.
+        float distNorm = clamp(dist / range, 0.0, 1.0);
+        float falloff = 1.0 - distNorm;
+        float atten = falloff * falloff;
 
         // Visibility via a shadow ray toward the light (finite length = distance to it).
         shadowRay.radiance = vec3(0.0);
