@@ -15,6 +15,13 @@
 #ifndef DYNAMIC_POINT_LIGHT_GLSL
 #define DYNAMIC_POINT_LIGHT_GLSL
 
+// [PROBE #23] Reach visualizer: within the light's range, force full brightness with NO falloff, NO
+// shadow ray, and NO NoL cull. If the room then fills with light out to the range cap, the range/loop
+// are fine and the normal path's falloff/shadow/NoL was the limiter. If it STILL only reaches ~2
+// blocks, the range value isn't reaching the shader (UBO packing) or the loop isn't evaluating distant
+// surfaces. Set to 0 / strip once diagnosed.
+#define RADIANCE_PROBE_HANDHELD_REACH 1
+
 vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
     uint count = min(skyUBO.dynamicLightCount, uint(MCVR_MAX_DYNAMIC_LIGHTS));
     if (count == 0u) { return vec3(0.0); }
@@ -35,7 +42,9 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         vec3 L = toLight / dist;
 
         float NoL = dot(L, surface.geometricNormal);
+#if !RADIANCE_PROBE_HANDHELD_REACH
         if (isOpaqueSurface && NoL <= 0.0) { continue; }
+#endif
 
         float lightPdf;
         vec3 brdf = DisneyEval(surface.mat, viewDir, surface.shadingNormal, L, lightPdf);
@@ -49,6 +58,12 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         float distNorm = clamp(dist / range, 0.0, 1.0);
         float distNorm2 = distNorm * distNorm;
         float atten = 1.0 - distNorm2 * distNorm2;
+
+#if RADIANCE_PROBE_HANDHELD_REACH
+        // Full brightness, no falloff/shadow, for every surface within range -> shows the true reach.
+        result += mainRay.throughput * brdf * light.color * light.intensity;
+        continue;
+#endif
 
         // Visibility via a shadow ray toward the light (finite length = distance to it).
         shadowRay.radiance = vec3(0.0);
