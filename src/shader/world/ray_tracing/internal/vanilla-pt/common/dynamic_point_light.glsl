@@ -42,13 +42,13 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         if (lightPdf <= 1e-6) { continue; }
 
         // Handheld lights need vanilla-torch REACH (light a room), which inverse-square (1/d^2) can't
-        // give -- it collapses to a tiny bright hotspot. Use a smooth LINEAR-radius falloff instead:
-        // (1 - d/R)^2 floods the whole radius and eases to 0 at the range cap R (= light.range, the
-        // block level), like a vanilla torch's per-block spread. No 1/d^2 term, so no near-source
-        // singularity to clamp.
+        // give -- it collapses to a tiny bright hotspot. Use a PARABOLIC window 1 - (d/R)^2: it's ~1
+        // near the source (same near-field, so brightness is unchanged) and stays high through the
+        // mid-range, only easing to 0 at the range cap R (= light.range). Reaches far further than
+        // (1 - d/R)^2, which crushes the mid-range to 1/4 at half the radius. No 1/d^2 term, so no
+        // near-source singularity to clamp.
         float distNorm = clamp(dist / range, 0.0, 1.0);
-        float falloff = 1.0 - distNorm;
-        float atten = falloff * falloff;
+        float atten = 1.0 - distNorm * distNorm;
 
         // Visibility via a shadow ray toward the light (finite length = distance to it).
         shadowRay.radiance = vec3(0.0);
