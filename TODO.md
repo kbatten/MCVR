@@ -18,8 +18,13 @@ each feature needs, plus native-only items.
 
 ## Native-only / stability
 
-- 🐞 **Clean exit** — shutdown-order teardown crash on quit; audit `render_framework` /
-  `renderer` teardown vs in-flight GPU work.
+- 🔧 **Clean exit** — fix applied Java-side, awaiting confirm (2026-08-16). NOT a native teardown-order
+  bug: `render_framework.hpp` member order is already correct (contexts/pipeline/swapchain before
+  device/vma, instance last). The crash was WHEN teardown ran — the mod called `RendererProxy.close()`
+  at `Minecraft.close()V` **TAIL**, after MC's `window.close()` (`glfwDestroyWindow`) + `glfwTerminate()`
+  (javap-verified order). `vk::Window::~Window()` `vkDestroySurfaceKHR` (+ swapchain) on the dead HWND
+  crashed the WSI. Fixed in Radiance `MinecraftClientMixins` (8db0e03): teardown now injects BEFORE
+  `Window.close()`. No native change.
 - 🧹 **Strip diagnostic scaffolding** — env-gated probes and `radiance_*.log` output are
   temporary; remove once the corresponding fix has landed and been confirmed.
 
