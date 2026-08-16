@@ -51,14 +51,11 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         vec3 brdf = DisneyEval(surface.mat, viewDir, surface.shadingNormal, L, lightPdf);
         if (lightPdf <= 1e-6) { continue; }
 
-        // Handheld lights need vanilla-torch REACH (fill a room). Placed torches light rooms through
-        // emissive GI (x16 indirect boost), which a x1 direct point light can't match by intensity
-        // alone -- so keep the near-field where it is (brightness is fine) and instead flatten the
-        // falloff to stay near full through the room, only diving to 0 near the range cap R. Window
-        // 1 - (d/R)^4: ~1 out to ~0.7R, then eases off. (Parabolic 1-(d/R)^2 still halved by ~0.7R.)
+        // Linear-radius falloff: full brightness at the source, fading steadily to 0 at the range cap R.
+        // Reads like a natural torch (brighter at your feet, dimmer at the edge) rather than a uniform
+        // flood. (Was the flat-top window 1 - (d/R)^4.)
         float distNorm = clamp(dist / range, 0.0, 1.0);
-        float distNorm2 = distNorm * distNorm;
-        float atten = 1.0 - distNorm2 * distNorm2;
+        float atten = 1.0 - distNorm;
 
         // Visibility via a shadow ray toward the light (finite length = distance to it).
         shadowRay.radiance = vec3(0.0);
