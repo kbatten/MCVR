@@ -18,13 +18,13 @@ each feature needs, plus native-only items.
 
 ## Native-only / stability
 
-- 🔧 **Clean exit** — fix applied Java-side, awaiting confirm (2026-08-16). NOT a native teardown-order
-  bug: `render_framework.hpp` member order is already correct (contexts/pipeline/swapchain before
-  device/vma, instance last). The crash was WHEN teardown ran — the mod called `RendererProxy.close()`
-  at `Minecraft.close()V` **TAIL**, after MC's `window.close()` (`glfwDestroyWindow`) + `glfwTerminate()`
-  (javap-verified order). `vk::Window::~Window()` `vkDestroySurfaceKHR` (+ swapchain) on the dead HWND
-  crashed the WSI. Fixed in Radiance `MinecraftClientMixins` (8db0e03): teardown now injects BEFORE
-  `Window.close()`. No native change.
+- ✅ **Clean exit** — **user-confirmed RESOLVED (2026-08-16)**, Java-only fix (no native change). NOT a
+  native teardown-order bug: `render_framework.hpp` member order is already correct (contexts/pipeline/
+  swapchain before device/vma, instance last). Two parts, both in Radiance: (1) `RendererProxy.close()`
+  ran at `Minecraft.close()V` **TAIL**, after MC's `window.close()`+`glfwTerminate()` (javap-verified) →
+  `vk::Window::~Window()` `vkDestroySurfaceKHR` on the dead HWND crashed the WSI → inject teardown BEFORE
+  `Window.close()` (`MinecraftClientMixins` 8db0e03); (2) that surfaced a shutdown hang — `ChunkProxy`
+  chunk-rebuild pools were non-daemon → `ClientShutdownWatchdog` crash → `setDaemon(true)` (54c86b6).
 - 🧹 **Strip diagnostic scaffolding** — env-gated probes and `radiance_*.log` output are
   temporary; remove once the corresponding fix has landed and been confirmed.
 
