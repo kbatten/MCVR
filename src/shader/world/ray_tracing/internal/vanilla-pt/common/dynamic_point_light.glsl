@@ -37,14 +37,20 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         float dist2 = dot(toLight, toLight);
         float range = max(light.range, 0.5);
         if (dist2 > range * range) { continue; }
+#if RADIANCE_PROBE_HANDHELD_REACH
+        // PURE range test: flat brightness on EVERY surface within range, ignoring NoL/brdf/shadow/
+        // falloff. The lit EXTENT == the shader's range. Reaches far -> range is honored (=35) and the
+        // 2-block limit is the NEE brdf/NoL (point-light limitation). Stops at ~2 -> the shader's range
+        // is small despite Java sending 35 (UBO layout bug).
+        result += vec3(2.0);
+        continue;
+#endif
 
         float dist = sqrt(max(dist2, 1e-8));
         vec3 L = toLight / dist;
 
         float NoL = dot(L, surface.geometricNormal);
-#if !RADIANCE_PROBE_HANDHELD_REACH
         if (isOpaqueSurface && NoL <= 0.0) { continue; }
-#endif
 
         float lightPdf;
         vec3 brdf = DisneyEval(surface.mat, viewDir, surface.shadingNormal, L, lightPdf);
@@ -58,12 +64,6 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         float distNorm = clamp(dist / range, 0.0, 1.0);
         float distNorm2 = distNorm * distNorm;
         float atten = 1.0 - distNorm2 * distNorm2;
-
-#if RADIANCE_PROBE_HANDHELD_REACH
-        // Full brightness, no falloff/shadow, for every surface within range -> shows the true reach.
-        result += mainRay.throughput * brdf * light.color * light.intensity;
-        continue;
-#endif
 
         // Visibility via a shadow ray toward the light (finite length = distance to it).
         shadowRay.radiance = vec3(0.0);
