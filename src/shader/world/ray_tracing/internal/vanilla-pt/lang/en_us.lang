@@ -46,6 +46,7 @@ render_pipeline.module.ray_tracing.attribute.direct_light_strength=Direct Light 
 render_pipeline.module.ray_tracing.attribute.indirect_light_strength=Indirect Light Strength
 render_pipeline.module.ray_tracing.attribute.handheld_light_gain=Handheld Light Brightness
 render_pipeline.module.ray_tracing.attribute.handheld_light_range=Handheld Light Range
+render_pipeline.module.ray_tracing.attribute.handheld_light_flicker=Handheld Light Flicker
 render_pipeline.module.ray_tracing.attribute.basic_radiance=Basic Radiance
 render_pipeline.module.ray_tracing.attribute.sun_radiance=Sun Radiance
 render_pipeline.module.ray_tracing.attribute.moon_radiance=Moon Radiance

@@ -257,7 +257,7 @@ namespace Data {
         T_UINT endSkyTextureID;
         T_UINT endPortalTextureID;
         T_UINT lightMapTextureID;
-        T_UINT pad4;
+        T_FLOAT flickerTime; // monotonic seconds clock (handheld-light flame flicker); was pad4
     };
 
     // A handheld/dynamic point light (torch, lantern, glowstone in hand). Position is in

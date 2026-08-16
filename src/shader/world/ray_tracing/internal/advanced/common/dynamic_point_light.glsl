@@ -24,6 +24,11 @@
 #ifndef MCVR_HANDHELD_LIGHT_RANGE
 #define MCVR_HANDHELD_LIGHT_RANGE 1.12
 #endif
+// Flame flicker toggle (config attribute handheld_light_flicker). 1 = the carried torch/lantern
+// wavers over time like a flame; 0 = steady glow.
+#ifndef MCVR_HANDHELD_LIGHT_FLICKER
+#define MCVR_HANDHELD_LIGHT_FLICKER 1
+#endif
 
 vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
     uint count = min(skyUBO.dynamicLightCount, uint(MCVR_MAX_DYNAMIC_LIGHTS));
@@ -31,6 +36,19 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
 
     bool isOpaqueSurface = surface.mat.transmission <= EPS;
     vec3 result = vec3(0.0);
+
+    // Flame flicker: a subtle time-varying multiplier so a carried torch/lantern wavers like a real
+    // flame instead of a flat glow. Sum of a few incommensurate sines (mean ~1, clamped) reads as
+    // organic and non-repeating; clocked by worldUBO.flickerTime (monotonic seconds). Same for every
+    // handheld light this frame, so computed once. Gated by the handheld_light_flicker config toggle.
+    float flicker = 1.0;
+    if (MCVR_HANDHELD_LIGHT_FLICKER != 0) {
+        float ft = worldUBO.flickerTime;
+        flicker = clamp(1.0
+            + 0.08 * sin(ft * 6.3)
+            + 0.05 * sin(ft * 13.7 + 1.7)
+            + 0.035 * sin(ft * 24.1 + 4.2), 0.6, 1.2);
+    }
 
     for (uint i = 0u; i < count; ++i) {
         DynamicLight light = skyUBO.dynamicLights[i];
@@ -71,7 +89,7 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
 
         vec3 visibility = shadowRay.throughput; // 0 opaque-blocked, tint for glass, 1 clear
         result += visibility * mainRay.throughput * brdf * light.color
-                  * light.intensity * MCVR_HANDHELD_LIGHT_GAIN * 0.25 * atten;
+                  * light.intensity * MCVR_HANDHELD_LIGHT_GAIN * 0.25 * atten * flicker;
     }
 
     return result;
