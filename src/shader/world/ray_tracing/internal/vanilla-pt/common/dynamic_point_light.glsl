@@ -15,6 +15,16 @@
 #ifndef DYNAMIC_POINT_LIGHT_GLSL
 #define DYNAMIC_POINT_LIGHT_GLSL
 
+// Tunable per shader pack (configs.json handheld_light_gain / handheld_light_range attributes). The mod
+// sends the BASE light: intensity = (level/15)^2, range = level (blocks). GAIN scales brightness; RANGE
+// scales the reach cap. Fallbacks match the config defaults so the shader still compiles standalone.
+#ifndef MCVR_HANDHELD_LIGHT_GAIN
+#define MCVR_HANDHELD_LIGHT_GAIN 5.0
+#endif
+#ifndef MCVR_HANDHELD_LIGHT_RANGE
+#define MCVR_HANDHELD_LIGHT_RANGE 0.15
+#endif
+
 vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
     uint count = min(skyUBO.dynamicLightCount, uint(MCVR_MAX_DYNAMIC_LIGHTS));
     if (count == 0u) { return vec3(0.0); }
@@ -28,7 +38,7 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
 
         vec3 toLight = light.position - surface.worldPos; // both in camera-relative scene space
         float dist2 = dot(toLight, toLight);
-        float range = max(light.range, 0.5);
+        float range = max(light.range * MCVR_HANDHELD_LIGHT_RANGE, 0.5);
         if (dist2 > range * range) { continue; }
 
         float dist = sqrt(max(dist2, 1e-8));
@@ -63,7 +73,8 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         traceRayEXT(topLevelAS, gl_RayFlagsNoneEXT, shadowMask, 0, 0, 0, shadowOrigin, 0.0001, L, shadowLen, 1);
 
         vec3 visibility = shadowRay.throughput; // 0 opaque-blocked, tint for glass, 1 clear
-        result += visibility * mainRay.throughput * brdf * light.color * light.intensity * atten;
+        result += visibility * mainRay.throughput * brdf * light.color
+                  * light.intensity * MCVR_HANDHELD_LIGHT_GAIN * atten;
     }
 
     return result;
