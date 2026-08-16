@@ -1,10 +1,10 @@
 // Next-event estimation for handheld/dynamic point lights (torch, lantern, glowstone in hand).
 //
-// vanilla-pt has no NEE for local area lights -- emissive blocks light the scene only through
-// path-traced hits on their emissive surfaces -- so a carried torch would otherwise never cast light.
-// These point lights fill that gap: each is sampled directly with a shadow ray, exactly like the sun
-// (sampleSurfaceDirectLight), and its result is added into the same directLight term so it is denoised
-// alongside everything else.
+// The handheld torch is a SkyUBO point light (dynamicLights[]), not a chunk area light, so ReSTIR's
+// chunk-light reservoirs never sample it. Sample it directly here with a shadow ray -- exactly like the
+// directional (sun) light -- and add the result into the same directLight term so it is denoised
+// alongside everything else. (Mirror of the vanilla-pt handheld light; both packs read the same
+// pack-agnostic SkyUBO data the mod fills each frame.)
 //
 // The shadow ray reuses the sun's shadow hit group (miss index 0). Because the sun's miss shader bakes
 // its own radiance into shadowRay.radiance, we cannot read radiance here; instead we read

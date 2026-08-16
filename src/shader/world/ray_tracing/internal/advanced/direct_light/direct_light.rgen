@@ -70,6 +70,9 @@ layout(location = 1) rayPayloadEXT ShadowRay shadowRay;
 #include "common/direct_light_visibility.glsl"
 #include "common/volumetric_cloud.glsl"
 #include "common/direct_light_eval.glsl"
+// Handheld/dynamic point lights (carried torch): a SkyUBO light ReSTIR's chunk reservoirs never sample,
+// so add it into the resolved primary direct light below, next to the sun + area-light reservoir.
+#include "common/dynamic_point_light.glsl"
 
 vec3 computeWaterDepthTransmittance(float waterDistance) {
     if (waterDistance <= 1e-4) { return vec3(1.0); }
@@ -172,7 +175,8 @@ void main() {
         prepared.surface, cameraRay.viewDir, prepared.referenceUv, prepared.referenceWorldPos, prepared.atlasUvMin,
         prepared.atlasUvMax, prepared.dPduWorld, prepared.dPdvWorld, prepared.baseGeoNormal, prepared.traceLocalHeight,
         prepared.normalTextureID, prepared.maxDepthWorld, prepared.isFftWaterSurface);
-    vec3 directRadiance = areaLight + directionalLight;
+    vec3 handheldLight = sampleSurfaceDynamicPointLights(prepared.surface, cameraRay.viewDir);
+    vec3 directRadiance = areaLight + directionalLight + handheldLight;
     directRadiance *= directLightViewTransmittance(pixel, cameraRay, prepared, throughputState.rgb);
     if (any(isnan(directRadiance)) || any(isinf(directRadiance))) { directRadiance = vec3(0.0); }
 
