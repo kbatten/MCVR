@@ -38,11 +38,15 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
         float range = max(light.range, 0.5);
         if (dist2 > range * range) { continue; }
 #if RADIANCE_PROBE_HANDHELD_REACH
-        // PURE range test: flat brightness on EVERY surface within range, ignoring NoL/brdf/shadow/
-        // falloff. The lit EXTENT == the shader's range. Reaches far -> range is honored (=35) and the
-        // 2-block limit is the NEE brdf/NoL (point-light limitation). Stops at ~2 -> the shader's range
-        // is small despite Java sending 35 (UBO layout bug).
-        result += vec3(2.0);
+        // Encode the shader-side range value as COLOR on the lit surfaces, to pin the bug:
+        //   BLUE  = light.range >= 30  (== the 35 Java sends -> value is read correctly)
+        //   RED   = light.range <  30  (misread -> UBO/std140 layout mismatch)
+        // Then read the EXTENT of the glow together with the color:
+        //   RED + ~2 blocks   -> range value is wrong (UBO layout).
+        //   BLUE + ~2 blocks  -> range is 35 but dist2 is too big: light.position vs surface.worldPos
+        //                        are in different spaces/scales (the cutoff dist2 > range*range fires
+        //                        early).  BLUE + far -> range & distance both fine.
+        result += (light.range >= 30.0) ? vec3(0.0, 0.0, 2.0) : vec3(2.0, 0.0, 0.0);
         continue;
 #endif
 
