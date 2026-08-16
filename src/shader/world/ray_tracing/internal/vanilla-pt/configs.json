@@ -266,6 +266,12 @@
             "define": "MCVR_HANDHELD_LIGHT_FLICKER_INTENSITY"
         },
         {
+            "name": "render_pipeline.module.ray_tracing.attribute.placed_light_flicker",
+            "type": "bool",
+            "default_value": "render_pipeline.true",
+            "define": "MCVR_PLACED_LIGHT_FLICKER"
+        },
+        {
             "name": "render_pipeline.module.ray_tracing.attribute.basic_radiance",
             "type": "float_range:0.0-10.0",
             "default_value": "0.5",

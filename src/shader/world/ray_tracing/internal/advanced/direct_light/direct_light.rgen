@@ -176,6 +176,10 @@ void main() {
         prepared.atlasUvMax, prepared.dPduWorld, prepared.dPdvWorld, prepared.baseGeoNormal, prepared.traceLocalHeight,
         prepared.normalTextureID, prepared.maxDepthWorld, prepared.isFftWaterSurface);
     vec3 handheldLight = sampleSurfaceDynamicPointLights(prepared.surface, cameraRay.viewDir);
+    // Placed emissive block lights (torch/lava/glowstone/...) waver subtly with the same flame flicker.
+    // Applied to the RESOLVED area-light term (after the ReSTIR reservoir shade) so it can't destabilize
+    // reservoir weights; scene-wide -> gated by the placed_light_flicker toggle.
+    if (MCVR_PLACED_LIGHT_FLICKER != 0) { areaLight *= lightFlickerFactor(worldUBO.flickerTime, 0.6); }
     vec3 directRadiance = areaLight + directionalLight + handheldLight;
     directRadiance *= directLightViewTransmittance(pixel, cameraRay, prepared, throughputState.rgb);
     if (any(isnan(directRadiance)) || any(isinf(directRadiance))) { directRadiance = vec3(0.0); }

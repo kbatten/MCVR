@@ -49,6 +49,7 @@ render_pipeline.module.ray_tracing.attribute.handheld_light_range=Handheld Light
 render_pipeline.module.ray_tracing.attribute.handheld_light_flicker=Handheld Light Flicker
 render_pipeline.module.ray_tracing.attribute.handheld_light_flicker_speed=Handheld Flicker Speed
 render_pipeline.module.ray_tracing.attribute.handheld_light_flicker_intensity=Handheld Flicker Intensity
+render_pipeline.module.ray_tracing.attribute.placed_light_flicker=Placed Light Flicker
 render_pipeline.module.ray_tracing.attribute.basic_radiance=Basic Radiance
 render_pipeline.module.ray_tracing.attribute.sun_radiance=Sun Radiance
 render_pipeline.module.ray_tracing.attribute.moon_radiance=Moon Radiance

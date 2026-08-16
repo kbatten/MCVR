@@ -950,6 +950,9 @@ void main() {
             (bounce == 0u && localBounce == 0) ? VPT_DIRECT_LIGHT_STRENGTH : VPT_INDIRECT_LIGHT_STRENGTH;
         vec3 emissionRadiance = emissionFactor * currentSurface.tint * currentSurface.mat.emission * mainRay.throughput;
         emissionRadiance += currentSurface.tint * albedoEmission * mainRay.throughput;
+        // Placed emissive blocks (torch/lava/glowstone/...) waver subtly with the same flame flicker
+        // as the handheld source (softened amp; scene-wide -> its own placed_light_flicker toggle).
+        if (MCVR_PLACED_LIGHT_FLICKER != 0) { emissionRadiance *= lightFlickerFactor(worldUBO.flickerTime, 0.6); }
         mainRay.radiance += emissionRadiance;
 
         vec3 directLight =

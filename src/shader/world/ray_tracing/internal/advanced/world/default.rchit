@@ -7,6 +7,7 @@
 
 #include "common/shared.hpp"
 #include "common/chunk_lookup.glsl"
+#include "common/light_flicker.glsl"
 #include "util/disney.glsl"
 #include "util/alpha_mode.glsl"
 #include "common/fft_water.glsl"
@@ -608,6 +609,10 @@ void main() {
             (bounce == 0u && localBounce == 0) ? ADV_DIRECT_LIGHT_STRENGTH : ADV_INDIRECT_LIGHT_STRENGTH;
         vec3 emissionRadiance = emissionFactor * currentSurface.tint * currentSurface.mat.emission * mainRay.throughput;
         emissionRadiance += currentSurface.tint * albedoEmission * mainRay.throughput;
+        // Placed emissive blocks (torch/lava/glowstone/...) waver subtly with the same flame flicker
+        // as the handheld source (softened amp; scene-wide -> its own placed_light_flicker toggle).
+        // This is the indirect/GI path; the primary direct area light is flickered in direct_light.rgen.
+        if (MCVR_PLACED_LIGHT_FLICKER != 0) { emissionRadiance *= lightFlickerFactor(worldUBO.flickerTime, 0.6); }
         mainRay.radiance += emissionRadiance;
 
         vec3 directLight =
