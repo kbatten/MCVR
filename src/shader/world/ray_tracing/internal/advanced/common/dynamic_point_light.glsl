@@ -29,6 +29,14 @@
 #ifndef MCVR_HANDHELD_LIGHT_FLICKER
 #define MCVR_HANDHELD_LIGHT_FLICKER 1
 #endif
+// Flicker speed scales the flame-waver frequency; intensity scales its amplitude. Both are config
+// attributes; 1.0 = the tuned baseline, 0.0 = effectively steady.
+#ifndef MCVR_HANDHELD_LIGHT_FLICKER_SPEED
+#define MCVR_HANDHELD_LIGHT_FLICKER_SPEED 1.0
+#endif
+#ifndef MCVR_HANDHELD_LIGHT_FLICKER_INTENSITY
+#define MCVR_HANDHELD_LIGHT_FLICKER_INTENSITY 1.0
+#endif
 
 vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
     uint count = min(skyUBO.dynamicLightCount, uint(MCVR_MAX_DYNAMIC_LIGHTS));
@@ -43,11 +51,11 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
     // handheld light this frame, so computed once. Gated by the handheld_light_flicker config toggle.
     float flicker = 1.0;
     if (MCVR_HANDHELD_LIGHT_FLICKER != 0) {
-        float ft = worldUBO.flickerTime;
-        flicker = clamp(1.0
-            + 0.08 * sin(ft * 6.3)
-            + 0.05 * sin(ft * 13.7 + 1.7)
-            + 0.035 * sin(ft * 24.1 + 4.2), 0.6, 1.2);
+        float ft = worldUBO.flickerTime * MCVR_HANDHELD_LIGHT_FLICKER_SPEED;
+        float wave = 0.08 * sin(ft * 6.3)
+                   + 0.05 * sin(ft * 13.7 + 1.7)
+                   + 0.035 * sin(ft * 24.1 + 4.2);
+        flicker = clamp(1.0 + wave * MCVR_HANDHELD_LIGHT_FLICKER_INTENSITY, 0.1, 2.0);
     }
 
     for (uint i = 0u; i < count; ++i) {

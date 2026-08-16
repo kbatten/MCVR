@@ -306,6 +306,18 @@
             "define": "MCVR_HANDHELD_LIGHT_FLICKER"
         },
         {
+            "name": "render_pipeline.module.ray_tracing.attribute.handheld_light_flicker_speed",
+            "type": "float_range:0.0-4.0",
+            "default_value": "1.0",
+            "define": "MCVR_HANDHELD_LIGHT_FLICKER_SPEED"
+        },
+        {
+            "name": "render_pipeline.module.ray_tracing.attribute.handheld_light_flicker_intensity",
+            "type": "float_range:0.0-4.0",
+            "default_value": "1.0",
+            "define": "MCVR_HANDHELD_LIGHT_FLICKER_INTENSITY"
+        },
+        {
             "name": "render_pipeline.module.ray_tracing.attribute.basic_radiance",
             "type": "float_range:0.0-10.0",
             "default_value": "0.5",
