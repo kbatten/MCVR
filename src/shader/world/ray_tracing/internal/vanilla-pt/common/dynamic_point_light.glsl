@@ -22,7 +22,7 @@
 #define MCVR_HANDHELD_LIGHT_GAIN 5.0
 #endif
 #ifndef MCVR_HANDHELD_LIGHT_RANGE
-#define MCVR_HANDHELD_LIGHT_RANGE 0.15
+#define MCVR_HANDHELD_LIGHT_RANGE 0.6
 #endif
 
 vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
@@ -38,7 +38,7 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
 
         vec3 toLight = light.position - surface.worldPos; // both in camera-relative scene space
         float dist2 = dot(toLight, toLight);
-        float range = max(light.range * MCVR_HANDHELD_LIGHT_RANGE, 0.5);
+        float range = max(light.range * MCVR_HANDHELD_LIGHT_RANGE * 0.25, 0.5);
         if (dist2 > range * range) { continue; }
 
         float dist = sqrt(max(dist2, 1e-8));

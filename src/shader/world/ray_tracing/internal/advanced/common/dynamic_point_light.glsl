@@ -19,10 +19,10 @@
 // sends the BASE light: intensity = (level/15)^2, range = level (blocks). GAIN scales brightness; RANGE
 // scales the reach cap. Fallbacks match the config defaults so the shader still compiles standalone.
 #ifndef MCVR_HANDHELD_LIGHT_GAIN
-#define MCVR_HANDHELD_LIGHT_GAIN 5.0
+#define MCVR_HANDHELD_LIGHT_GAIN 8.0
 #endif
 #ifndef MCVR_HANDHELD_LIGHT_RANGE
-#define MCVR_HANDHELD_LIGHT_RANGE 0.15
+#define MCVR_HANDHELD_LIGHT_RANGE 1.12
 #endif
 
 vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
@@ -38,7 +38,7 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
 
         vec3 toLight = light.position - surface.worldPos; // both in camera-relative scene space
         float dist2 = dot(toLight, toLight);
-        float range = max(light.range * MCVR_HANDHELD_LIGHT_RANGE, 0.5);
+        float range = max(light.range * MCVR_HANDHELD_LIGHT_RANGE * 0.25, 0.5);
         if (dist2 > range * range) { continue; }
 
         float dist = sqrt(max(dist2, 1e-8));
@@ -71,7 +71,7 @@ vec3 sampleSurfaceDynamicPointLights(SampledSurface surface, vec3 viewDir) {
 
         vec3 visibility = shadowRay.throughput; // 0 opaque-blocked, tint for glass, 1 clear
         result += visibility * mainRay.throughput * brdf * light.color
-                  * light.intensity * MCVR_HANDHELD_LIGHT_GAIN * atten;
+                  * light.intensity * MCVR_HANDHELD_LIGHT_GAIN * 0.25 * atten;
     }
 
     return result;
