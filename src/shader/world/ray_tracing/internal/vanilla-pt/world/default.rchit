@@ -949,7 +949,16 @@ void main() {
         float emissionFactor =
             (bounce == 0u && localBounce == 0) ? VPT_DIRECT_LIGHT_STRENGTH : VPT_INDIRECT_LIGHT_STRENGTH;
         vec3 emissionRadiance = emissionFactor * currentSurface.tint * currentSurface.mat.emission * mainRay.throughput;
-        emissionRadiance += currentSurface.tint * albedoEmission * mainRay.throughput;
+        // Vanilla light-level self-glow: keep the surface HUE but take brightness from the light level,
+        // not the per-texel albedo -- else a dark-albedo emissive face (a copper lantern's metal body, a
+        // dark redstone lamp) glows dark and reads as non-emissive while lighter faces (the top cap) glow,
+        // so the block looked "top-only emissive". Normalize by the max channel (floored so near-black/
+        // noise isn't amplified) for a uniform hue-tinted glow like a vanilla lantern; bright emitters
+        // (lava/glowstone) already sit near max 1 so they're ~unchanged. The LabPBR mat.emission term
+        // above is per-texel and intentionally left albedo-accurate.
+        vec3 emissiveSelfGlowTint = currentSurface.tint
+            / max(max(currentSurface.tint.r, max(currentSurface.tint.g, currentSurface.tint.b)), 0.2);
+        emissionRadiance += emissiveSelfGlowTint * albedoEmission * mainRay.throughput;
         // Placed emissive blocks (torch/lava/glowstone/...) waver subtly with the same flame flicker
         // as the handheld source (softened amp; scene-wide -> its own placed_light_flicker toggle).
         if (MCVR_PLACED_LIGHT_FLICKER != 0) { emissionRadiance *= lightFlickerFactor(worldUBO.flickerTime, 0.6); }
